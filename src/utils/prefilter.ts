@@ -72,13 +72,6 @@ const RULES: Rule[] = [
       /\b(nfl|nba|mlb|nhl|premier\s+league|champions\s+league|world\s+cup|super\s+bowl)\b/i.test(t),
   },
   {
-    id: "politics",
-    minTier: 2,
-    test: (t) =>
-      /\b(election\s+campaign|congress\s+vote|senate\s+vote|white\s+house\s+says)\b/i.test(t) ||
-      /\b(trump\s+says|biden\s+says|political\s+debate)\b/i.test(t),
-  },
-  {
     id: "entertainment",
     minTier: 2,
     test: (t) =>
@@ -113,7 +106,6 @@ const REASON_LABELS: Record<string, string> = {
   crypto: "крипторынок",
   markets: "биржевой шум",
   sports: "спорт",
-  politics: "политика",
   entertainment: "развлечения",
   lifestyle: "лайфстайл",
   gaming: "игры/скидки",

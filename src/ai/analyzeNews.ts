@@ -10,7 +10,9 @@ import {
   type NewsAnalysis,
   type NewsItem,
 } from "../types.js";
+import { checkContentPolicy } from "../filters/contentPolicy.js";
 import { computeWeightedScore } from "../utils/sourceScore.js";
+import { resolveItemLanguage } from "../utils/publicationLanguage.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -170,7 +172,8 @@ function formatCandidates(candidates: NewsItem[]): string {
     .map((item, i) => {
       const tier = item.sourceTier === 1 ? "PRIMARY (tier 1)" : "MEDIA (tier 2)";
       const trust = item.trustScore ?? 0.75;
-      return `[${i}] Source: ${item.source} [${tier}, trust=${trust}]
+      const language = resolveItemLanguage(item);
+      return `[${i}] Source: ${item.source} [${tier}, trust=${trust}, language=${language}]
 Title: ${item.title}
 URL: ${item.url}
 Published: ${item.publishedAt.toISOString()}
@@ -203,7 +206,13 @@ Assign maturity level:
 4. breakthrough — rare paradigm shifts.
 5. failure — accidents, shutdowns, technological disasters.
 
-Filter out junk: deals, gadget reviews, rumors, politics, ads, minor app updates, crypto noise.
+CONTENT POLICY (mandatory, overrides everything):
+Radar Future is about civilian science, technology, engineering, and innovation — NOT politics, military, weapons, wars, geopolitics, or defense programs.
+If an item is primarily political, military, weapons-related, or geopolitical — DO NOT include it in analyses at all (omit that index entirely).
+Dual-use tech is allowed only when the main context is civilian (research, industry, medicine, space science, energy, transport).
+Never assign defense/military framing.
+
+Filter out junk: deals, gadget reviews, rumors, ads, minor app updates, crypto noise.
 
 Return JSON with this exact shape:
 {
@@ -215,15 +224,19 @@ Return JSON with this exact shape:
         "score": 7,
         "category": "ai",
         "impactHorizon": "1-3 years",
-        "reason": "brief explanation in English",
-        "observerComment": "короткое наблюдение по-русски или null",
-        "technology": "краткая метка технологии по-русски, напр. локальный AI на устройстве"
+        "reason": "brief editor note in the item's source language",
+        "observerComment": "короткое наблюдение или null",
+        "technology": "краткая метка технологии, 2-6 слов"
       }
     }
   ]
 }
 
-Also add field technology — short Russian label of the core technology (2-6 words), not the product name.
+LANGUAGE (per candidate tag language=…):
+- language=ru: reason, technology, observerComment — всё на русском. Не переводить заголовок и описание.
+- language=en: reason in English; technology and observerComment in Russian.
+
+Also add field technology — short label of the core technology (2-6 words), not the product name.
 
 Also add field observerComment — an optional short comment from a live observer.
 
@@ -233,7 +246,7 @@ Find one human, market, historical, or technology angle.
 
 If there is nothing interesting to add — return null.
 
-The comment must sound natural in Russian, without pathos or clichés.
+Observer comment must sound natural, without pathos or clichés.
 
 Maximum 35–45 words.
 
@@ -361,6 +374,19 @@ export async function analyzeForPipeline(
       const url = item.news.url.toLowerCase();
       if (seenUrls.has(url)) continue;
       seenUrls.add(url);
+
+      const policy = checkContentPolicy(item.news);
+      if (!policy.allowedForRadar) {
+        logger.info(
+          `Content policy excluded after AI "${item.news.title}": ${policy.reason}`
+        );
+        continue;
+      }
+
+      if (item.analysis.category === "defense-tech") {
+        logger.info(`Content policy: defense-tech category skipped "${item.news.title}"`);
+        continue;
+      }
 
       if (item.analysis.level === "observation") {
         observations.push(item);

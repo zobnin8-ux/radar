@@ -42,30 +42,22 @@ export function buildGitTrendPost(
   const body = [
     `🔮 <b>Радар будущего · GitHub</b> · ${escapeTelegramHtml(week)}`,
     `Уровень: ${enriched.radarLevel}/5 · ${escapeTelegramHtml(categoryLabel)}`,
-    ``,
     `<b>${escapeTelegramHtml(enriched.headline)}</b>`,
-    ``,
     `📈 <b>GitHub-сигнал</b>`,
     escapeTelegramHtml(trend.summary),
-    ``,
     `🔭 <b>Почему это может быть важно</b>`,
     escapeTelegramHtml(enriched.futureWhy),
-    ``,
     `👀 <b>Кому смотреть</b>`,
     escapeTelegramHtml(enriched.whoShouldCare),
-    ``,
     `📡 <b>На что обратить внимание</b>`,
     watchLines,
-    ``,
     `🔗 <b>Репозитории</b>`,
     repoLines,
-    ``,
     `#радарбудущего #${trend.category.replace(/-/g, "")}`,
-  ].join("\n");
+  ].join("\n\n");
 
-  const post = options?.includeIntro
-    ? `${buildGitTrendIntroHtml()}\n${body}`
-    : body;
+  const intro = options?.includeIntro ? `${buildGitTrendIntroHtml()}\n` : "";
+  const post = `${intro}${body}`;
 
   if (post.length > MAX_POST_LENGTH) {
     throw new Error(`GitTrend post too long (${post.length} chars)`);

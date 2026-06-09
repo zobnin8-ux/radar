@@ -1,3 +1,5 @@
+export type PublicationLanguage = "en" | "ru";
+
 export interface NewsItem {
   title: string;
   url: string;
@@ -6,6 +8,8 @@ export interface NewsItem {
   description?: string;
   sourceTier?: 1 | 2;
   trustScore?: number;
+  /** Язык источника; для ru — без перевода на всех этапах */
+  language?: PublicationLanguage;
 }
 
 export const MATURITY_LEVELS = [

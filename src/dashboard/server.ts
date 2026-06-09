@@ -21,7 +21,7 @@ import { reschedule } from "../pipeline/scheduler.js";
 import { loadSettings, saveSettings, type AppSettings } from "../storage/settingsStore.js";
 import { getArchiveOverview } from "../storage/newsStore.js";
 import { getLastWeeklyTrend } from "../storage/trendsStore.js";
-import { loadState } from "../storage/stateStore.js";
+import { filterRssErrors, loadState } from "../storage/stateStore.js";
 import { cronToLabel, SCHEDULE_PRESETS } from "../utils/schedule.js";
 import { logger } from "../utils/logger.js";
 
@@ -97,7 +97,11 @@ async function handleApi(
       postIntervalCron: settings.postIntervalCron,
       scheduleLabel: cronToLabel(settings.postIntervalCron),
       lastRun: state.lastRun,
-      rssErrors: state.rssErrors,
+      rssErrors: filterRssErrors(state.rssErrors, {
+        activeSources: new Set(
+          settings.rssSources.filter((s) => s.enabled).map((s) => s.name)
+        ),
+      }),
       schedulePresets: SCHEDULE_PRESETS,
     });
     return;

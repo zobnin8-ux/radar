@@ -16,6 +16,7 @@ import {
 } from "../storage/publishedStore.js";
 import { loadSettings, updateSettings } from "../storage/settingsStore.js";
 import { loadState } from "../storage/stateStore.js";
+import { buildRuSourcesReport, formatRuSourcesReport } from "../rss/ruSourcesReport.js";
 import { buildDashboardPlainMessage } from "../utils/dashboardUrls.js";
 import { isSameCalendarDay } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
@@ -30,6 +31,7 @@ const HELP_TEXT = `📡 Радар будущего
 /run — опубликовать сейчас
 /inject 5 — инъекция из очереди (вне лимита)
 /dry — тест без канала
+/rutest — проверка RU-источников (4 шт., RSS, без AI)
 /pause — пауза
 /resume — возобновить
 /today — что вышло
@@ -251,6 +253,18 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       await sendTelegramMessage(chatId, "🧪 Тест без публикации...");
       const result = await runPipeline({ trigger: "telegram", dryRun: true });
       await sendTelegramMessage(chatId, result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+      break;
+    }
+
+    case "/rutest": {
+      await sendTelegramMessage(chatId, "🇷🇺 Загружаю RU-источники (без AI)...");
+      try {
+        const report = await buildRuSourcesReport();
+        await sendTelegramMessage(chatId, formatRuSourcesReport(report));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        await sendTelegramMessage(chatId, `❌ Ошибка теста RU-источников: ${msg}`);
+      }
       break;
     }
 

@@ -81,12 +81,8 @@ Why important (post draft): ${postContext.whyImportant}`,
     logger.info(`Signal confirmed match: "${earlier.title}" → "${current.news.title}"`);
 
     return `\n\n📡 <b>Сигнал подтвердился</b>
-
 Впервые мы заметили этот тренд ${esc(timeAgo)} назад как раннее наблюдение.
-
-Тогда речь шла о:
-«${esc(earlierTitle)}»
-
+Тогда речь шла о: «${esc(earlierTitle)}»
 ${esc(evolution)}`;
   } catch (error) {
     logger.error("Failed to parse signal confirmed block", { error, content });

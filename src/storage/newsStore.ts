@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { getSourceLanguage } from "../rss/sources.js";
 import type { AnalyzedNews, NewsItem, NewsRecord } from "../types.js";
 import { PUBLISHABLE_LEVELS } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
@@ -150,6 +151,14 @@ export function analyzedToRecord(item: AnalyzedNews): NewsRecord {
   };
 }
 
+/** Исключение по политике контента — URL больше не обрабатывается */
+export async function markContentPolicyExcluded(
+  item: Pick<NewsItem, "url" | "title" | "source" | "publishedAt">,
+  reason: string
+): Promise<void> {
+  await markPrefilterRejected(item, `Content policy: ${reason}`);
+}
+
 /** Помечает URL как обработанный без AI — не анализировать повторно */
 export async function markPrefilterRejected(
   item: Pick<NewsItem, "url" | "title" | "source" | "publishedAt">,
@@ -196,6 +205,7 @@ export function recordToAnalyzed(record: NewsRecord): AnalyzedNews {
       publishedAt: new Date(record.newsPublishedAt),
       trustScore: record.trustScore,
       sourceTier: record.sourceTier,
+      language: getSourceLanguage(record.source),
     },
     analysis: {
       level: record.level,

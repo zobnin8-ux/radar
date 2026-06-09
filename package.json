@@ -10,6 +10,7 @@
     "build": "tsc",
     "backfill:observer": "tsx scripts/backfill-observer.ts",
     "backfill:observer:dry": "tsx scripts/backfill-observer.ts --dry-run",
+    "test:ru-sources": "tsx scripts/send-ru-sources-report.ts",
     "dry": "cross-env DRY_RUN=true tsx src/index.ts",
     "covers": "tsx src/visual/previewCovers.ts",
     "desktop": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",

@@ -5,6 +5,7 @@ import {
   countPublishQueue,
   getPublishQueue,
   isSeenUrl,
+  markContentPolicyExcluded,
   markPrefilterRejected,
   recordToAnalyzed,
   saveNewsRecord,
@@ -16,15 +17,19 @@ import {
 import { getEnabledSources, loadSettings } from "../storage/settingsStore.js";
 import {
   countPostsToday,
+  countRuPostsToday,
   getCategoryCountsToday,
   getHorizonCountsToday,
   loadPublished,
 } from "../storage/publishedStore.js";
+import { MAX_RU_POSTS_PER_DAY } from "../rss/sources.js";
+import { applyRuDailyCap, isRussianPublication } from "../utils/ruPublicationCap.js";
 import { applyMinAiReserve } from "../utils/minAiQuota.js";
 import { selectForPublication } from "../utils/publicationSelect.js";
-import { recordLastRun, setPipelineRunning } from "../storage/stateStore.js";
+import { pruneRssErrors, recordLastRun, setPipelineRunning } from "../storage/stateStore.js";
 import type { AnalyzedNews } from "../types.js";
 import { dedupeNews } from "../utils/dedupe.js";
+import { filterByContentPolicy } from "../filters/contentPolicy.js";
 import { prefilterNews } from "../utils/prefilter.js";
 import { isWithinLast24Hours } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
@@ -77,11 +82,15 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
   try {
     logger.info(`Starting pipeline (${options.trigger}, dryRun=${dryRun})...`);
 
+    const enabledSources = getEnabledSources(settings);
+    await pruneRssErrors(enabledSources.map((s) => s.name));
+
     await loadPublished();
     await syncPublishedToNews();
     await migrateObservationsFromNews();
 
     const postsToday = await countPostsToday();
+    let ruPostsToday = await countRuPostsToday();
     const remainingToday = settings.maxPostsPerDay - postsToday;
     const postsThisRun =
       remainingToday > 0
@@ -106,6 +115,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
         `Horizon mix: target ${horizonMix}% long-term (today: ${horizonCounts.now} now / ${horizonCounts.future} future)`
       );
     }
+    logger.info(`RU sources cap: max ${MAX_RU_POSTS_PER_DAY}/day (today: ${ruPostsToday})`);
 
     const queueBefore = await getPublishQueue();
     if (queueBefore.length > 0) {
@@ -151,10 +161,19 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       if (minAiQueue.injected) {
         logger.info(`AI minimum: reserved slot for "${minAiQueue.title}"`);
       }
-      const fromQueue = minAiQueue.selected;
+      const queueCap = applyRuDailyCap(minAiQueue.selected, ruPostsToday);
+      if (queueCap.deferred > 0) {
+        logger.info(
+          `RU cap: ${queueCap.deferred} queued item(s) deferred (max ${MAX_RU_POSTS_PER_DAY}/day)`
+        );
+      }
+      const fromQueue = queueCap.items;
       if (fromQueue.length > 0) {
         logger.info(`Publishing ${fromQueue.length} item(s) from queue...`);
         publishedCount += await publishPosts(fromQueue, { dryRun, postType: "article" });
+        if (!dryRun) {
+          ruPostsToday += fromQueue.filter((item) => isRussianPublication(item)).length;
+        }
       }
     }
 
@@ -205,7 +224,19 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       return b.publishedAt.getTime() - a.publishedAt.getTime();
     });
 
-    const { passed: toAnalyze, rejected: prefiltered } = prefilterNews(sorted);
+    const { passed: afterPolicy, rejected: policyRejected } = filterByContentPolicy(sorted);
+    if (policyRejected.length > 0) {
+      logger.info(
+        `Content policy: ${afterPolicy.length} allowed, ${policyRejected.length} excluded (no AI)`
+      );
+      if (!dryRun) {
+        for (const entry of policyRejected) {
+          await markContentPolicyExcluded(entry.item, entry.result.reason);
+        }
+      }
+    }
+
+    const { passed: toAnalyze, rejected: prefiltered } = prefilterNews(afterPolicy);
     if (prefiltered.length > 0) {
       logger.info(
         `Pre-filter: ${toAnalyze.length} passed, ${prefiltered.length} rejected (no AI)`
@@ -285,7 +316,13 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
     if (minAiNew.injected) {
       logger.info(`AI minimum: reserved slot for "${minAiNew.title}"`);
     }
-    const toPublish = minAiNew.selected;
+    const newCap = applyRuDailyCap(minAiNew.selected, ruPostsToday);
+    if (newCap.deferred > 0) {
+      logger.info(
+        `RU cap: ${newCap.deferred} new item(s) deferred (max ${MAX_RU_POSTS_PER_DAY}/day)`
+      );
+    }
+    const toPublish = newCap.items;
     queuedNew = Math.max(0, publishable.length - toPublish.length);
 
     if (toPublish.length > 0) {

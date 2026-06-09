@@ -1,3 +1,4 @@
+import { checkContentPolicy } from "../filters/contentPolicy.js";
 import { generateTelegramPost } from "../ai/generateTelegramPost.js";
 import {
   analyzedToRecord,
@@ -22,6 +23,15 @@ export async function publishPosts(
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
+
+    const policy = checkContentPolicy(candidate.news);
+    if (!policy.allowedForRadar) {
+      logger.warn(
+        `Content policy blocked "${candidate.news.title}": ${policy.reason}`
+      );
+      continue;
+    }
+
     const tag = options.postType === "injection" ? "inject" : "post";
     logger.info(
       `[${tag}] ${i + 1}/${candidates.length}: "${candidate.news.title}" (level ${candidate.analysis.level}, score ${candidate.analysis.score})`

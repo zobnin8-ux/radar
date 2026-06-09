@@ -1,11 +1,18 @@
 export type SourceTier = 1 | 2;
-
+export type SourceRegion = "global" | "ru";
+export type SourceLanguage = "en" | "ru";
 export interface RssSource {
   name: string;
   url: string;
   tier: SourceTier;
   trustScore: number;
   group: string;
+  region?: SourceRegion;
+  language?: SourceLanguage;
+  /** Дополнительные RSS-ленты того же источника (например, рубрики Habr). */
+  feedUrls?: string[];
+  /** Отбрасывать элементы, если URL содержит любой из фрагментов (без учёта регистра). */
+  excludeUrlPatterns?: string[];
 }
 
 export interface RssSourceConfig extends RssSource {
@@ -57,7 +64,61 @@ const TIER2_SOURCES: RssSource[] = [
   { name: "Electrek", url: "https://electrek.co/feed/", tier: 2, trustScore: 0.8, group: "energy" },
 ];
 
-export const DEFAULT_RSS_SOURCES: RssSource[] = [...TIER1_SOURCES, ...TIER2_SOURCES];
+/**
+ * Российские источники (дополнительный контур) — уникальные научно-технологические сигналы.
+ * Не формируют основную повестку; лимит публикаций — MAX_RU_POSTS_PER_DAY.
+ * Исключены после RSS-теста: Хабр, CNews, TAdviser, Indicator.ru, Элементы, Наука.рф.
+ */
+const RU_TIER2_SOURCES: RssSource[] = [
+  {
+    name: "N+1",
+    url: "https://nplus1.ru/rss",
+    tier: 2,
+    trustScore: 0.85,
+    group: "science",
+    region: "ru",
+    language: "ru",
+  },
+  {
+    name: "3DNews",
+    url: "https://3dnews.ru/news/rss/",
+    tier: 2,
+    trustScore: 0.75,
+    group: "engineering",
+    region: "ru",
+    language: "ru",
+  },
+  {
+    name: "Naked Science",
+    url: "https://naked-science.ru/article/category/hi-tech/feed",
+    tier: 2,
+    trustScore: 0.75,
+    group: "science",
+    region: "ru",
+    language: "ru",
+    feedUrls: ["https://naked-science.ru/article/category/sci/feed"],
+    excludeUrlPatterns: ["/article/tech/", "/article/category/tech/"],
+  },
+  {
+    name: "Хайтек",
+    url: "https://hightech.fm/feed",
+    tier: 2,
+    trustScore: 0.6,
+    group: "science",
+    region: "ru",
+    language: "ru",
+    feedUrls: ["https://hightech.fm/rubrics/tehnologii/feed"],
+  },
+];
+
+/** Макс. постов из RU-источников в день — дополнительный контур, не основная повестка */
+export const MAX_RU_POSTS_PER_DAY = 2;
+
+export const DEFAULT_RSS_SOURCES: RssSource[] = [
+  ...TIER1_SOURCES,
+  ...TIER2_SOURCES,
+  ...RU_TIER2_SOURCES,
+];
 
 const TRUST_BY_NAME = new Map(DEFAULT_RSS_SOURCES.map((s) => [s.name, s.trustScore]));
 
@@ -68,6 +129,26 @@ export function getSourceTrust(sourceName: string): number {
 export function getSourceTier(sourceName: string): SourceTier {
   const source = DEFAULT_RSS_SOURCES.find((s) => s.name === sourceName);
   return source?.tier ?? 2;
+}
+
+const LANGUAGE_BY_NAME = new Map(
+  DEFAULT_RSS_SOURCES.map((s) => [s.name, s.language ?? "en" as SourceLanguage])
+);
+
+const REGION_BY_NAME = new Map(
+  DEFAULT_RSS_SOURCES.map((s) => [s.name, s.region ?? "global" as SourceRegion])
+);
+
+export function getSourceLanguage(sourceName: string): SourceLanguage {
+  return LANGUAGE_BY_NAME.get(sourceName) ?? "en";
+}
+
+export function getSourceRegion(sourceName: string): SourceRegion {
+  return REGION_BY_NAME.get(sourceName) ?? "global";
+}
+
+export function isRussianSourceName(sourceName: string): boolean {
+  return getSourceRegion(sourceName) === "ru";
 }
 
 export function mergeRssSources(saved: RssSourceConfig[]): RssSourceConfig[] {

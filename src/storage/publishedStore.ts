@@ -4,6 +4,7 @@ import type { Category, ImpactHorizon, PublishedRecord } from "../types.js";
 import { isFutureHorizon } from "../utils/publicationSelect.js";
 import { CATEGORIES } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
+import { isRussianSourceName } from "../rss/sources.js";
 import { logger } from "../utils/logger.js";
 
 const DATA_PATH = join(process.cwd(), "data", "published.json");
@@ -55,6 +56,16 @@ export async function countPostsToday(now = new Date()): Promise<number> {
   const records = await loadPublished();
   return records.filter(
     (r) => isQuotaPost(r) && isSameCalendarDay(new Date(r.postedAt), now)
+  ).length;
+}
+
+export async function countRuPostsToday(now = new Date()): Promise<number> {
+  const records = await loadPublished();
+  return records.filter(
+    (r) =>
+      isQuotaPost(r) &&
+      isSameCalendarDay(new Date(r.postedAt), now) &&
+      isRussianSourceName(r.source)
   ).length;
 }
 

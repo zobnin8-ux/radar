@@ -11,6 +11,7 @@ import { addPublished, isAlreadyPublished } from "../storage/publishedStore.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import { recordLastRun } from "../storage/stateStore.js";
 import { sendPost } from "../telegram/sendPost.js";
+import { filterByContentPolicy } from "../filters/contentPolicy.js";
 import { dedupeNews } from "../utils/dedupe.js";
 import { prefilterGadgetNews } from "../utils/gadgetPrefilter.js";
 import { logger } from "../utils/logger.js";
@@ -72,7 +73,14 @@ export async function runWeeklyInTheBox(): Promise<InTheBoxResult> {
       return { success: true, message };
     }
 
-    const { passed, rejected } = prefilterGadgetNews(unknown);
+    const { passed: afterPolicy, rejected: policyRejected } = filterByContentPolicy(unknown);
+    if (policyRejected.length > 0) {
+      logger.info(
+        `In-the-box content policy: ${policyRejected.length} excluded, ${afterPolicy.length} left`
+      );
+    }
+
+    const { passed, rejected } = prefilterGadgetNews(afterPolicy);
     if (rejected.length > 0) {
       logger.info(`Gadget pre-filter: ${passed.length} passed, ${rejected.length} rejected`);
     }

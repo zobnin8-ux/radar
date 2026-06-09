@@ -17,6 +17,15 @@ export const IN_THE_BOX_SOURCES: RssSource[] = [
   { name: "Nothing", url: "https://nothing.tech/blogs/news.atom", tier: 1, trustScore: 0.8, group: "hardware" },
   { name: "The Verge Hardware", url: "https://www.theverge.com/rss/hardware/index.xml", tier: 2, trustScore: 0.8, group: "hardware" },
   { name: "Ars Technica Gadgets", url: "https://feeds.arstechnica.com/arstechnica/gadgets", tier: 2, trustScore: 0.8, group: "hardware" },
+  {
+    name: "3DNews",
+    url: "https://3dnews.ru/news/rss/",
+    tier: 2,
+    trustScore: 0.75,
+    group: "hardware",
+    region: "ru",
+    language: "ru",
+  },
 ];
 
 export function getInTheBoxSourceConfigs() {

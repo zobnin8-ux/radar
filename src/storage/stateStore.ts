@@ -24,6 +24,9 @@ export interface RssError {
   message: string;
 }
 
+/** Показываем только ошибки за последние 24 ч */
+export const RSS_ERROR_TTL_MS = 24 * 60 * 60 * 1000;
+
 export interface BotState {
   pipelineRunning: boolean;
   lastRun: LastRunInfo;
@@ -99,13 +102,44 @@ export async function recordLastRun(info: Omit<LastRunInfo, "at"> & { at?: strin
   await persist(state);
 }
 
+export function filterRssErrors(
+  errors: RssError[],
+  options: { activeSources?: Set<string>; maxAgeMs?: number } = {}
+): RssError[] {
+  const maxAge = options.maxAgeMs ?? RSS_ERROR_TTL_MS;
+  const cutoff = Date.now() - maxAge;
+
+  return errors.filter((e) => {
+    if (options.activeSources && !options.activeSources.has(e.source)) return false;
+    return new Date(e.at).getTime() >= cutoff;
+  });
+}
+
+export async function clearRssError(source: string): Promise<void> {
+  const state = await loadState();
+  const next = state.rssErrors.filter((e) => e.source !== source);
+  if (next.length === state.rssErrors.length) return;
+  state.rssErrors = next;
+  await persist(state);
+}
+
 export async function addRssError(source: string, message: string): Promise<void> {
   const state = await loadState();
-  state.rssErrors.unshift({
+  const entry: RssError = {
     source,
     at: new Date().toISOString(),
     message,
-  });
-  state.rssErrors = state.rssErrors.slice(0, 20);
+  };
+  state.rssErrors = [entry, ...state.rssErrors.filter((e) => e.source !== source)].slice(0, 20);
+  await persist(state);
+}
+
+/** Убрать устаревшие и источники, которых больше нет в настройках */
+export async function pruneRssErrors(activeSourceNames: string[]): Promise<void> {
+  const state = await loadState();
+  const active = new Set(activeSourceNames);
+  const pruned = filterRssErrors(state.rssErrors, { activeSources: active });
+  if (pruned.length === state.rssErrors.length) return;
+  state.rssErrors = pruned;
   await persist(state);
 }
