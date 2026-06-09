@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+data/covers/
+logs/
+
+# Runtime data (local bot state)
+data/admin.json
+data/state.json
+data/news.json
+data/published.json
+data/observations.json
+data/trends.json
+data/gittrend.json
+data/in-the-box.json

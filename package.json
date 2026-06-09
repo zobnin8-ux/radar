@@ -1,0 +1,35 @@
+{
+  "name": "radar-future-bot",
+  "version": "1.0.0",
+  "description": "Telegram-канал «Радар будущего» — автоматическая публикация технологических сигналов",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "backfill:observer": "tsx scripts/backfill-observer.ts",
+    "backfill:observer:dry": "tsx scripts/backfill-observer.ts --dry-run",
+    "dry": "cross-env DRY_RUN=true tsx src/index.ts",
+    "covers": "tsx src/visual/previewCovers.ts",
+    "desktop": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
+    "autostart:remove": "powershell -ExecutionPolicy Bypass -File scripts/uninstall-autostart.ps1"
+  },
+  "keywords": ["telegram", "rss", "openai", "tech-news"],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3",
+    "openai": "^4.77.0",
+    "rss-parser": "^3.13.0",
+    "sharp": "^0.33.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/node-cron": "^3.0.11",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

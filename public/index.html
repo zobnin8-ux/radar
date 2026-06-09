@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f1117">
+  <title>Радар будущего</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2d3a;
+      --text: #e4e6eb;
+      --muted: #8b8fa3;
+      --accent: #4a9eff;
+      --green: #3dd68c;
+      --yellow: #f5a623;
+      --red: #ff6b6b;
+      --nav-h: 64px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 16px;
+      padding-bottom: calc(var(--nav-h) + 24px);
+      max-width: 480px;
+      margin: 0 auto;
+    }
+    .hidden { display: none !important; }
+
+    /* Login */
+    #login-screen {
+      min-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 16px;
+    }
+    .logo { font-size: 2.5rem; text-align: center; }
+    .login-title { text-align: center; font-size: 1.4rem; font-weight: 700; }
+    .login-hint { text-align: center; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+
+    /* Cards */
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* Hero status */
+    .hero {
+      text-align: center;
+      padding: 24px 18px;
+    }
+    .hero-icon { font-size: 2.8rem; margin-bottom: 8px; }
+    .hero-status { font-size: 1.35rem; font-weight: 700; margin-bottom: 6px; }
+    .hero-sub { color: var(--muted); font-size: 0.9rem; line-height: 1.4; }
+
+    /* Progress */
+    .progress-wrap { margin: 14px 0; }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      margin-bottom: 6px;
+    }
+    .progress-bar {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--green));
+      border-radius: 4px;
+      transition: width 0.4s;
+    }
+
+    /* Big action button */
+    .btn-big {
+      width: 100%;
+      padding: 18px;
+      border: none;
+      border-radius: 14px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-big.primary { background: var(--accent); color: #fff; }
+    .btn-big.secondary { background: var(--border); color: var(--text); }
+    .btn-big.warn { background: var(--yellow); color: #1a1d27; }
+    .btn-big:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-big.loading { pointer-events: none; opacity: 0.7; }
+
+    .btn-row { display: flex; gap: 10px; }
+    .btn-row .btn-big { flex: 1; padding: 14px; font-size: 0.9rem; }
+
+    /* Info rows */
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+      gap: 12px;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: var(--muted); flex-shrink: 0; }
+    .info-value { text-align: right; line-height: 1.35; }
+
+    /* Bottom nav */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: var(--nav-h);
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding-bottom: env(safe-area-inset-bottom);
+      z-index: 50;
+    }
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      font-size: 0.58rem;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px 6px;
+      border: none;
+      background: none;
+      flex: 1;
+      max-width: 72px;
+    }
+    .nav-item.active { color: var(--accent); }
+    .nav-item .icon { font-size: 1.3rem; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* History */
+    .post-card {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .post-card:last-child { border-bottom: none; }
+    .post-title { font-weight: 600; font-size: 0.95rem; line-height: 1.35; margin-bottom: 6px; }
+    .post-meta { color: var(--muted); font-size: 0.8rem; }
+    .post-link {
+      display: inline-block;
+      margin-top: 8px;
+      color: var(--accent);
+      font-size: 0.85rem;
+      text-decoration: none;
+    }
+    .score-badge {
+      display: inline-block;
+      background: var(--border);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      margin-left: 6px;
+    }
+    .cat-badge {
+      display: inline-block;
+      background: rgba(74, 158, 255, 0.15);
+      color: var(--accent);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      margin-right: 6px;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .stat-box {
+      background: var(--bg);
+      border-radius: 12px;
+      padding: 14px 10px;
+      text-align: center;
+      border: 1px solid var(--border);
+    }
+    .stat-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+    .stat-lbl { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
+    .queue-pos {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+      min-width: 1.4rem;
+    }
+    .section-hint {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    /* Logs */
+    .log-line {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .log-line:last-child { border-bottom: none; }
+    .log-time { color: var(--muted); font-size: 0.75rem; }
+    .log-error { color: var(--red); }
+    .log-warn { color: var(--yellow); }
+
+    /* Settings */
+    input, select {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 1rem;
+      margin-top: 4px;
+    }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .field .hint { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+    .rss-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .rss-item:last-child { border-bottom: none; }
+    .rss-item input { width: 22px; height: 22px; margin: 0; }
+    .rss-item label { font-size: 0.95rem; font-weight: 500; }
+
+    /* Help card */
+    .help-cmd {
+      background: var(--bg);
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin: 6px 0;
+      font-size: 0.88rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .help-cmd code { color: var(--accent); font-weight: 600; }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--muted);
+    }
+    .empty .icon { font-size: 2.5rem; margin-bottom: 10px; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: calc(var(--nav-h) + 12px);
+      left: 16px; right: 16px;
+      max-width: 448px;
+      margin: 0 auto;
+      background: #2d3148;
+      padding: 14px 18px;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 0.9rem;
+      z-index: 100;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      transform: translateY(20px);
+      opacity: 0;
+      transition: 0.25s;
+      pointer-events: none;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* Spinner */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- ═══ ВХОД ═══ -->
+<div id="login-screen">
+  <div class="logo">📡</div>
+  <div class="login-title">Радар будущего</div>
+  <p class="login-hint">
+    Панель управления каналом.<br>
+    Работает только дома, в той же Wi‑Fi, что и компьютер.
+  </p>
+  <div class="card">
+    <div class="field" style="margin:0">
+      <label>Пароль</label>
+      <input type="password" id="login-password" placeholder="Введите пароль" autocomplete="current-password">
+      <p class="hint">Пароль задан в файле .env на компьютере (DASHBOARD_PASSWORD)</p>
+    </div>
+    <button class="btn-big primary" style="margin-top:14px;margin-bottom:0" onclick="login()">Войти</button>
+  </div>
+</div>
+
+<!-- ═══ ПРИЛОЖЕНИЕ ═══ -->
+<div id="app" class="hidden">
+
+  <!-- Главная -->
+  <div id="panel-home" class="panel active">
+    <div class="card hero">
+      <div class="hero-icon" id="hero-icon">📡</div>
+      <div class="hero-status" id="hero-status">Загрузка...</div>
+      <div class="hero-sub" id="hero-sub"></div>
+    </div>
+
+    <div class="card">
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span>Постов сегодня</span>
+          <span id="posts-counter">—</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <button class="btn-big primary" id="btn-run" onclick="confirmRun()">
+        🚀 Опубликовать сейчас
+      </button>
+      <div class="btn-row">
+        <button class="btn-big secondary" id="btn-dry" onclick="confirmDry()">🧪 Пробный запуск</button>
+        <button class="btn-big warn" id="btn-toggle-pause" onclick="togglePause()">⏸ Пауза</button>
+      </div>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn-big secondary" id="btn-inject-5" onclick="confirmInject(5)">⚡ Инъекция 5</button>
+        <button class="btn-big secondary" id="btn-inject-6" onclick="confirmInject(6)">⚡ Инъекция 6</button>
+      </div>
+      <p class="hint" style="text-align:center;margin-top:8px" id="action-hint">
+        Инъекция — очередь с разнообразием источников, вне лимита 15/день
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Сводка</div>
+      <div class="info-row">
+        <span class="info-label">Расписание</span>
+        <span class="info-value" id="info-schedule">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">За один запуск</span>
+        <span class="info-value" id="info-per-run">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Последний раз</span>
+        <span class="info-value" id="info-last-run">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Режим</span>
+        <span class="info-value" id="info-mode">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Квота категорий</span>
+        <span class="info-value" id="info-category-quota">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Баланс горизонтов</span>
+        <span class="info-value" id="info-horizon-mix">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Минимум AI в день</span>
+        <span class="info-value" id="info-min-ai">—</span>
+      </div>
+    </div>
+
+    <div class="card hidden" id="horizons-card">
+      <div class="card-title">Горизонты сегодня</div>
+      <div id="horizon-breakdown"></div>
+    </div>
+
+    <div class="card hidden" id="categories-card">
+      <div class="card-title">Посты по категориям сегодня</div>
+      <div id="category-breakdown"></div>
+    </div>
+
+    <div class="card hidden" id="errors-card">
+      <div class="card-title">⚠️ Проблемы с источниками</div>
+      <div id="rss-errors"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Управление с телефона через Telegram</div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:10px">
+        Напишите боту в <b>личные сообщения</b> (не в канал):
+      </p>
+      <div class="help-cmd"><code>/run</code><span>опубликовать</span></div>
+      <div class="help-cmd"><code>/inject 5</code><span>инъекция из очереди</span></div>
+      <div class="help-cmd"><code>/status</code><span>как дела</span></div>
+      <div class="help-cmd"><code>/pause</code><span>пауза</span></div>
+      <div class="help-cmd"><code>/today</code><span>что вышло</span></div>
+      <div class="help-cmd"><code>/panel</code><span>адрес панели</span></div>
+      <div class="help-cmd"><code>/trends</code><span>направление недели</span></div>
+      <div class="help-cmd"><code>/box</code><span>будущее в коробке</span></div>
+    </div>
+  </div>
+
+  <!-- Очередь / архив -->
+  <div id="panel-queue" class="panel">
+    <div class="card">
+      <div class="card-title">Архив бота</div>
+      <p class="section-hint">Всё, что бот уже проанализировал. Очередь публикуется первой — без повторного AI.</p>
+      <div class="stat-grid" id="archive-stats">
+        <div class="stat-box"><div class="stat-num" id="stat-queue">—</div><div class="stat-lbl">В очереди</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-today">—</div><div class="stat-lbl">Сегодня в канале</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-obs">—</div><div class="stat-lbl">Архив наблюдений</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-trends">—</div><div class="stat-lbl">Сигналов для трендов</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📥 Очередь публикации</div>
+      <p class="section-hint">Готовы к выходу в канал (уровни 2–4). Порядок — по приоритету.</p>
+      <div id="queue-list"><div class="empty"><div class="icon">⏳</div>Загрузка...</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🟢 Архив наблюдений (уровень 1)</div>
+      <p class="section-hint">Не публикуются в канал. При уровне «Влияние» или «Прорыв» бот ищет совпадения и показывает блок «Сигнал подтвердился».</p>
+      <div id="obs-list"><div class="empty"><div class="icon">⏳</div>Загрузка...</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧭 Направление недели</div>
+      <p class="section-hint">3 тренда по итогам недели. Авто: воскресенье 11:00 UTC. Вручную: <code>/trends</code> в Telegram.</p>
+      <div id="trends-block"><div class="empty"><div class="icon">⏳</div>Загрузка...</div></div>
+    </div>
+  </div>
+
+  <!-- История -->
+  <div id="panel-history" class="panel">
+    <div class="card">
+      <div class="card-title">Опубликовано в канале</div>
+      <div id="history-list">
+        <div class="empty"><div class="icon">📭</div>Загрузка...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Логи -->
+  <div id="panel-logs" class="panel">
+    <div class="card">
+      <div class="card-title">Что делал бот</div>
+      <div id="logs-list">
+        <div class="empty"><div class="icon">📋</div>Загрузка...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Настройки -->
+  <div id="panel-settings" class="panel">
+    <div class="card">
+      <div class="card-title">Публикация</div>
+      <div class="field">
+        <label>Сколько постов в день</label>
+        <input type="number" id="set-max-day" min="1" max="20" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label>Сколько постов за один запуск</label>
+        <input type="number" id="set-max-run" min="1" max="10" inputmode="numeric">
+        <p class="hint">Бот выберет лучшие новости по оценке AI</p>
+      </div>
+      <div class="field">
+        <label>Макс. постов одной категории в день</label>
+        <input type="number" id="set-category-quota" min="0" max="10" inputmode="numeric">
+        <p class="hint">Например: 4 — не больше 4 постов про AI в день. 0 = без лимита</p>
+      </div>
+      <div class="field">
+        <label>Доля долгосрочных постов (%)</label>
+        <input type="number" id="set-horizon-mix" min="0" max="50" inputmode="numeric">
+        <p class="hint">Например: 30 — ~70% «сейчас» и ~30% «1–3 года» и дальше. 0 = без баланса</p>
+      </div>
+      <div class="field">
+        <label>Мин. AI-постов в день</label>
+        <input type="number" id="set-min-ai" min="0" max="5" inputmode="numeric">
+        <p class="hint">1 — хотя бы один значимый AI (уровень 2–4). Tier-1/impact — сразу. 0 = выкл</p>
+      </div>
+      <div class="field">
+        <label>Как часто проверять новости</label>
+        <select id="set-schedule"></select>
+      </div>
+      <div class="field">
+        <label>Режим работы</label>
+        <select id="set-dry">
+          <option value="false">Боевой — публиковать в канал</option>
+          <option value="true">Тестовый — не публиковать, только проверка</option>
+        </select>
+      </div>
+      <button class="btn-big primary" onclick="saveSettings()" id="btn-save">💾 Сохранить настройки</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Источники новостей</div>
+      <p class="hint" style="margin-bottom:12px">Снимите галочку, чтобы отключить источник</p>
+      <div id="rss-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Нижнее меню -->
+<nav class="bottom-nav hidden" id="bottom-nav">
+  <button class="nav-item active" data-tab="home"><span class="icon">🏠</span>Главная</button>
+  <button class="nav-item" data-tab="queue"><span class="icon">📥</span>Очередь</button>
+  <button class="nav-item" data-tab="history"><span class="icon">📰</span>История</button>
+  <button class="nav-item" data-tab="logs"><span class="icon">📋</span>Журнал</button>
+  <button class="nav-item" data-tab="settings"><span class="icon">⚙️</span>Настройки</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN_KEY = 'radar_token';
+let token = localStorage.getItem(TOKEN_KEY);
+let settings = null;
+let statusData = null;
+
+function showToast(msg, duration = 3500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function timeAgo(iso) {
+  if (!iso) return 'ещё не запускался';
+  const diff = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'только что';
+  if (min < 60) return `${min} мин. назад`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} ч. назад`;
+  return new Date(iso).toLocaleString('ru-RU', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+function humanLastRun(lastRun) {
+  if (!lastRun?.at) return 'Ещё не запускался';
+  const when = timeAgo(lastRun.at);
+  const msg = lastRun.message || '';
+  if (lastRun.publishedCount > 0) return `${when} — опубликовано ${lastRun.publishedCount}`;
+  if (!lastRun.success) return `${when} — ошибка: ${msg}`;
+  return `${when} — ${msg}`;
+}
+
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401) { logout(); throw new Error('auth'); }
+  return res.json();
+}
+
+async function login() {
+  const password = document.getElementById('login-password').value;
+  if (!password) { showToast('Введите пароль'); return; }
+  try {
+    const data = await api('/api/login', { method: 'POST', body: JSON.stringify({ password }) });
+    if (data.token) {
+      token = data.token;
+      localStorage.setItem(TOKEN_KEY, token);
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      document.getElementById('bottom-nav').classList.remove('hidden');
+      refresh();
+      setInterval(refresh, 5000);
+    } else {
+      showToast('Неверный пароль');
+    }
+  } catch {
+    showToast('Не удалось подключиться. Проверьте, что бот запущен на ПК.');
+  }
+}
+
+function logout() {
+  token = null;
+  localStorage.removeItem(TOKEN_KEY);
+  location.reload();
+}
+
+function setBtnLoading(id, loading, defaultHtml) {
+  const btn = document.getElementById(id);
+  if (loading) {
+    btn.classList.add('loading');
+    btn.innerHTML = '<div class="spinner"></div> Подождите...';
+    btn.disabled = true;
+  } else {
+    btn.classList.remove('loading');
+    btn.innerHTML = defaultHtml;
+    btn.disabled = false;
+  }
+}
+
+async function refresh() {
+  try {
+    const s = await api('/api/status');
+    statusData = s;
+
+    const heroIcon = document.getElementById('hero-icon');
+    const heroStatus = document.getElementById('hero-status');
+    const heroSub = document.getElementById('hero-sub');
+    const pauseBtn = document.getElementById('btn-toggle-pause');
+
+    if (s.pipelineRunning || s.injectionRunning) {
+      heroIcon.textContent = s.injectionRunning ? '⚡' : '🔄';
+      heroStatus.textContent = s.injectionRunning ? 'Инъекция из очереди...' : 'Собираю новости...';
+      heroSub.textContent = s.injectionRunning
+        ? 'Публикуем накопленное вне дневного лимита'
+        : 'Подождите, это может занять 1–3 минуты';
+    } else if (s.paused) {
+      heroIcon.textContent = '⏸';
+      heroStatus.textContent = 'На паузе';
+      heroSub.textContent = 'Автопубликация остановлена. Можно запустить вручную.';
+      pauseBtn.innerHTML = '▶️ Возобновить';
+      pauseBtn.className = 'btn-big secondary';
+    } else if (s.remainingToday <= 0) {
+      heroIcon.textContent = '✅';
+      heroStatus.textContent = 'Лимит на сегодня';
+      heroSub.textContent = `Опубликовано ${s.postsToday} из ${s.maxPostsPerDay}. Завтра продолжим.`;
+      pauseBtn.innerHTML = '⏸ Пауза';
+      pauseBtn.className = 'btn-big warn';
+    } else {
+      heroIcon.textContent = '📡';
+      heroStatus.textContent = 'Всё в порядке';
+      heroSub.textContent = `${s.scheduleLabel}. Осталось ${s.remainingToday} постов на сегодня.`;
+      pauseBtn.innerHTML = '⏸ Пауза';
+      pauseBtn.className = 'btn-big warn';
+    }
+
+    const pct = Math.min(100, (s.postsToday / s.maxPostsPerDay) * 100);
+    const inj = s.injectionsToday || 0;
+    document.getElementById('posts-counter').textContent =
+      inj > 0 ? `${s.postsToday} из ${s.maxPostsPerDay} (+${inj} ⚡)` : `${s.postsToday} из ${s.maxPostsPerDay}`;
+    document.getElementById('progress-fill').style.width = pct + '%';
+
+    document.getElementById('info-schedule').textContent = s.paused ? 'На паузе' : s.scheduleLabel;
+    document.getElementById('info-per-run').textContent = `до ${s.maxPostsPerRun} постов`;
+    document.getElementById('info-last-run').textContent = humanLastRun(s.lastRun);
+    document.getElementById('info-mode').textContent = s.dryRun ? 'Тестовый' : 'Боевой';
+    const quotaMax = s.categoryQuotaMax ?? 0;
+    document.getElementById('info-category-quota').textContent =
+      quotaMax > 0 ? `до ${quotaMax} в категории` : 'выключена';
+
+    const horizonMix = s.horizonMixPercent ?? 0;
+    const hCounts = s.horizonCountsToday || { now: 0, future: 0 };
+    const hTotal = (hCounts.now || 0) + (hCounts.future || 0);
+    const futurePct = hTotal > 0 ? Math.round((hCounts.future / hTotal) * 100) : 0;
+    document.getElementById('info-horizon-mix').textContent =
+      horizonMix > 0
+        ? `${hCounts.now} сейчас / ${hCounts.future} долг. (цель ${horizonMix}%)`
+        : 'выключен';
+
+    const counts = s.categoryCountsToday || {};
+    const minAi = s.minAiPostsPerDay ?? 0;
+    const aiToday = s.aiPostsToday ?? (counts.ai ?? 0);
+    const minAiMet = minAi > 0 && aiToday >= minAi;
+    document.getElementById('info-min-ai').textContent =
+      minAi > 0
+        ? `${aiToday} / мин. ${minAi}${minAiMet ? ' ✓' : ''}`
+        : 'выключен';
+
+    const horCard = document.getElementById('horizons-card');
+    const horBreakdown = document.getElementById('horizon-breakdown');
+    if (hTotal > 0 && horizonMix > 0) {
+      horCard.classList.remove('hidden');
+      const atTarget = futurePct >= horizonMix;
+      horBreakdown.innerHTML = `
+        <div class="info-row">
+          <span class="info-label">Сейчас</span>
+          <span class="info-value">${hCounts.now}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Долгосрочные (1–10+ лет)</span>
+          <span class="info-value" style="${atTarget ? '' : 'color:var(--warn)'}">${hCounts.future} (${futurePct}%)</span>
+        </div>
+      `;
+    } else {
+      horCard.classList.add('hidden');
+    }
+
+    const catCard = document.getElementById('categories-card');
+    const catBreakdown = document.getElementById('category-breakdown');
+    let activeCats = Object.entries(counts).filter(([, n]) => n > 0);
+    if (minAi > 0 && (counts.ai ?? 0) < minAi && !activeCats.some(([c]) => c === 'ai')) {
+      activeCats = [['ai', counts.ai ?? 0], ...activeCats];
+    }
+    if (activeCats.length > 0) {
+      catCard.classList.remove('hidden');
+      catBreakdown.innerHTML = activeCats
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat, n]) => {
+          const atLimit = quotaMax > 0 && n >= quotaMax;
+          const isAi = cat === 'ai';
+          const minAiN = s.minAiPostsPerDay ?? 0;
+          const belowMinAi = isAi && minAiN > 0 && n < minAiN;
+          const label = categoryLabel(cat);
+          const suffix = isAi && minAiN > 0
+            ? ` / макс. ${quotaMax || '∞'}, мин. ${minAiN}`
+            : quotaMax > 0 ? ` / ${quotaMax}` : '';
+          return `<div class="info-row">
+            <span class="info-label">${esc(label)}</span>
+            <span class="info-value" style="${atLimit || belowMinAi ? 'color:var(--warn)' : ''}">${n}${suffix}</span>
+          </div>`;
+        }).join('');
+    } else {
+      catCard.classList.add('hidden');
+    }
+
+    const errs = document.getElementById('rss-errors');
+    const errCard = document.getElementById('errors-card');
+    if (s.rssErrors?.length) {
+      errCard.classList.remove('hidden');
+      errs.innerHTML = s.rssErrors.slice(0, 5).map(e =>
+        `<div class="log-line"><span class="log-warn">${esc(e.source)}</span> — ${esc(e.message)}</div>`
+      ).join('');
+    } else {
+      errCard.classList.add('hidden');
+    }
+
+    const busy = s.pipelineRunning || s.injectionRunning;
+    document.getElementById('btn-run').disabled = busy || s.remainingToday <= 0;
+    document.getElementById('btn-dry').disabled = busy;
+    document.getElementById('btn-inject-5').disabled = busy;
+    document.getElementById('btn-inject-6').disabled = busy;
+    pauseBtn.disabled = busy;
+  } catch { /* offline */ }
+}
+
+async function confirmRun() {
+  if (!confirm('Запустить сбор новостей и опубликовать в канал?')) return;
+  setBtnLoading('btn-run', true);
+  try {
+    const r = await api('/api/run', { method: 'POST' });
+    showToast(r.message || r.error || 'Готово', 5000);
+    refresh();
+  } catch {
+    showToast('Ошибка запуска');
+  }
+  setBtnLoading('btn-run', false, '🚀 Опубликовать сейчас');
+}
+
+async function confirmDry() {
+  setBtnLoading('btn-dry', true);
+  try {
+    const r = await api('/api/dry-run', { method: 'POST' });
+    showToast(r.message || r.error || 'Готово — смотрите консоль на ПК', 5000);
+    refresh();
+  } catch {
+    showToast('Ошибка');
+  }
+  setBtnLoading('btn-dry', false, '🧪 Пробный запуск');
+}
+
+async function confirmInject(count) {
+  if (!confirm(`Инъекция ${count} постов из очереди?\n\nНе считается в лимит ${statusData?.maxPostsPerDay || 15}/день.`)) return;
+  const btnId = count === 5 ? 'btn-inject-5' : 'btn-inject-6';
+  const label = `⚡ Инъекция ${count}`;
+  setBtnLoading(btnId, true);
+  try {
+    const r = await api('/api/inject', {
+      method: 'POST',
+      body: JSON.stringify({ count }),
+    });
+    showToast(r.message || r.error || 'Готово', 5000);
+    refresh();
+  } catch {
+    showToast('Ошибка инъекции');
+  }
+  setBtnLoading(btnId, false, label);
+}
+
+async function togglePause() {
+  if (!statusData) return;
+  if (statusData.paused) {
+    await api('/api/resume', { method: 'POST' });
+    showToast('Автопубликация возобновлена');
+  } else {
+    if (!confirm('Остановить автопубликацию по расписанию?')) return;
+    await api('/api/pause', { method: 'POST' });
+    showToast('Пауза. Ручной запуск по-прежнему работает.');
+  }
+  refresh();
+}
+
+function renderArchiveItems(items, emptyIcon, emptyText, showPosition) {
+  if (!items?.length) {
+    return `<div class="empty"><div class="icon">${emptyIcon}</div>${emptyText}</div>`;
+  }
+  return items.map((item, i) => `
+    <div class="post-card" style="display:flex;gap:10px;align-items:flex-start">
+      ${showPosition ? `<span class="queue-pos">${i + 1}</span>` : ''}
+      <div style="flex:1;min-width:0">
+        <div class="post-title">${esc(item.title)}</div>
+        <div class="post-meta">
+          <span class="cat-badge">${esc(categoryLabel(item.category))}</span>
+          ${esc(item.source)} · ${levelLabel(item.level)}
+          <span class="score-badge">${item.score}/10</span>
+        </div>
+        <div class="post-meta" style="margin-top:4px">
+          ${horizonLabel(item.impactHorizon)} · ${timeAgo(item.discoveredAt)}
+          ${item.sourceTier === 1 ? ' · tier 1' : ''}
+        </div>
+        <a class="post-link" href="${esc(item.url)}" target="_blank" rel="noopener">Источник →</a>
+      </div>
+    </div>
+  `).join('');
+}
+
+function horizonLabel(h) {
+  const labels = {
+    'now': 'сейчас',
+    '1-3 years': '1–3 года',
+    '3-7 years': '3–7 лет',
+    '10+ years': '10+ лет'
+  };
+  return labels[h] || h || '—';
+}
+
+async function loadArchive() {
+  const data = await api('/api/archive');
+  const c = data.counts || {};
+  document.getElementById('stat-queue').textContent = c.queue ?? 0;
+  document.getElementById('stat-today').textContent = c.publishedToday ?? 0;
+  document.getElementById('stat-obs').textContent = c.observations ?? 0;
+  document.getElementById('stat-trends').textContent = c.trendSignals ?? 0;
+
+  document.getElementById('queue-list').innerHTML = renderArchiveItems(
+    data.queue,
+    '📭',
+    'Очередь пуста — после следующего запуска здесь появятся готовые посты',
+    true
+  );
+  document.getElementById('obs-list').innerHTML = renderArchiveItems(
+    data.observations,
+    '🔭',
+    'Наблюдений пока нет',
+    false
+  );
+  await loadTrends();
+}
+
+async function loadTrends() {
+  const data = await api('/api/trends');
+  const el = document.getElementById('trends-block');
+  const last = data.last;
+  if (!last) {
+    el.innerHTML = '<div class="empty"><div class="icon">🧭</div>Ещё не публиковалось. Нужно минимум 5 сигналов за 7 дней.</div>';
+    return;
+  }
+  const trendsHtml = (last.trends || []).map((t, i) => `
+    <div class="post-card" style="margin-top:${i ? '10px' : '0'}">
+      <div class="post-title">${i + 1}. ${esc(t.title)}</div>
+      <div class="post-meta" style="margin-top:6px;line-height:1.4">${esc(t.description)}</div>
+      <div class="post-meta" style="margin-top:4px">Горизонт: ${horizonLabel(t.horizon)}</div>
+    </div>
+  `).join('');
+  el.innerHTML = `
+    <div class="post-meta" style="margin-bottom:8px">${timeAgo(last.postedAt)} · ${last.sourceCount} сигналов</div>
+    <div class="post-title" style="margin-bottom:6px">${esc(last.headline)}</div>
+    <div class="post-meta" style="margin-bottom:12px;line-height:1.4">${esc(last.summary)}</div>
+    ${trendsHtml}
+  `;
+}
+
+async function loadHistory() {
+  const data = await api('/api/published');
+  const el = document.getElementById('history-list');
+  if (!data.published?.length) {
+    el.innerHTML = '<div class="empty"><div class="icon">📭</div>Пока ничего не опубликовано</div>';
+    return;
+  }
+  el.innerHTML = data.published.map(p => `
+    <div class="post-card">
+      <div class="post-title">${esc(p.title)}</div>
+      <div class="post-meta">
+        ${esc(p.source)} · ${levelLabel(p.level)} · ${timeAgo(p.postedAt)}
+        <span class="score-badge">${p.score}/10</span>
+      </div>
+      <a class="post-link" href="${p.url}" target="_blank">Открыть источник →</a>
+    </div>
+  `).join('');
+}
+
+const LOG_LABELS = { info: 'инфо', warn: 'внимание', error: 'ошибка', debug: 'отладка' };
+
+async function loadLogs() {
+  const data = await api('/api/logs');
+  const el = document.getElementById('logs-list');
+  const logs = (data.logs || []).filter(l => l.level !== 'debug').slice(0, 40);
+  if (!logs.length) {
+    el.innerHTML = '<div class="empty"><div class="icon">📋</div>Записей пока нет</div>';
+    return;
+  }
+  el.innerHTML = logs.map(l => `
+    <div class="log-line">
+      <div class="log-time">${new Date(l.at).toLocaleTimeString('ru-RU')} · ${LOG_LABELS[l.level] || l.level}</div>
+      <span class="log-${l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : ''}">${esc(l.message)}</span>
+    </div>
+  `).join('');
+}
+
+const SCHEDULE_OPTIONS = {
+  every_hour: { cron: '0 * * * *', label: 'Каждый час' },
+  every_2h: { cron: '0 */2 * * *', label: 'Каждые 2 часа' },
+  every_6h: { cron: '0 */6 * * *', label: 'Каждые 6 часов' },
+  daily_9: { cron: '0 9 * * *', label: 'Раз в день (в 9:00)' },
+};
+
+function cronToPreset(cron) {
+  for (const [key, v] of Object.entries(SCHEDULE_OPTIONS)) {
+    if (v.cron === cron) return key;
+  }
+  return 'every_hour';
+}
+
+async function loadSettingsPanel() {
+  settings = await api('/api/settings');
+  document.getElementById('set-max-day').value = settings.maxPostsPerDay;
+  document.getElementById('set-max-run').value = settings.maxPostsPerRun;
+  document.getElementById('set-category-quota').value = settings.categoryQuotaMax ?? 4;
+  document.getElementById('set-horizon-mix').value = settings.horizonMixPercent ?? 30;
+  document.getElementById('set-min-ai').value = settings.minAiPostsPerDay ?? 1;
+  document.getElementById('set-dry').value = String(settings.dryRun);
+
+  const sel = document.getElementById('set-schedule');
+  sel.innerHTML = Object.entries(SCHEDULE_OPTIONS).map(([key, v]) =>
+    `<option value="${key}">${v.label}</option>`
+  ).join('');
+  sel.value = cronToPreset(settings.postIntervalCron);
+
+  document.getElementById('rss-list').innerHTML = settings.rssSources.map((s, i) =>
+    `<div class="rss-item">
+      <input type="checkbox" id="rss-${i}" ${s.enabled ? 'checked' : ''}>
+      <label for="rss-${i}">${esc(s.name)}</label>
+    </div>`
+  ).join('');
+}
+
+async function saveSettings() {
+  if (!settings) await loadSettingsPanel();
+  const preset = document.getElementById('set-schedule').value;
+  const cron = SCHEDULE_OPTIONS[preset]?.cron || '0 * * * *';
+  const rssSources = settings.rssSources.map((s, i) => ({
+    ...s,
+    enabled: document.getElementById('rss-' + i)?.checked ?? s.enabled
+  }));
+
+  setBtnLoading('btn-save', true);
+  try {
+    await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        maxPostsPerDay: +document.getElementById('set-max-day').value,
+        maxPostsPerRun: +document.getElementById('set-max-run').value,
+        categoryQuotaMax: +document.getElementById('set-category-quota').value,
+        horizonMixPercent: +document.getElementById('set-horizon-mix').value,
+        minAiPostsPerDay: +document.getElementById('set-min-ai').value,
+        postIntervalCron: cron,
+        dryRun: document.getElementById('set-dry').value === 'true',
+        rssSources
+      })
+    });
+    showToast('Сохранено! Расписание обновлено автоматически.');
+    refresh();
+  } catch {
+    showToast('Не удалось сохранить');
+  }
+  setBtnLoading('btn-save', false, '💾 Сохранить настройки');
+}
+
+function categoryLabel(cat) {
+  const labels = {
+    ai: 'AI',
+    robotics: 'Робототехника',
+    space: 'Космос',
+    aviation: 'Авиация',
+    energy: 'Энергетика',
+    transport: 'Транспорт',
+    biotech: 'Биотех',
+    engineering: 'Инженерия',
+    science: 'Наука',
+    materials: 'Материалы',
+    climate: 'Климат',
+    'defense-tech': 'Оборонные техн.',
+    semiconductors: 'Чипы',
+    startups: 'Стартапы',
+    other: 'Прочее'
+  };
+  return labels[cat] || cat;
+}
+
+function levelLabel(level) {
+  const labels = {
+    observation: '🟢 Уровень 1',
+    signal: '🟡 Уровень 2',
+    impact: '🔴 Уровень 3',
+    breakthrough: '🚀 Уровень 4',
+    failure: '⚫ Сбой'
+  };
+  return labels[level] || level || '—';
+}
+
+function esc(t) {
+  const d = document.createElement('div');
+  d.textContent = t;
+  return d.innerHTML;
+}
+
+document.querySelectorAll('.nav-item').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'queue') loadArchive();
+    if (tab.dataset.tab === 'history') loadHistory();
+    if (tab.dataset.tab === 'logs') loadLogs();
+    if (tab.dataset.tab === 'settings') loadSettingsPanel();
+  });
+});
+
+if (token) {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('bottom-nav').classList.remove('hidden');
+  refresh();
+  setInterval(refresh, 5000);
+} else {
+  document.getElementById('login-password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') login();
+  });
+}
+</script>
+</body>
+</html>
