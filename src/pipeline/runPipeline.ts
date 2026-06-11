@@ -1,19 +1,20 @@
 import { analyzeForPipeline } from "../ai/analyzeNews.js";
 import { fetchAllNews } from "../rss/fetchNews.js";
 import {
-  analyzedToRecord,
+  analyzedToQueuedRecord,
   countPublishQueue,
   getPublishQueue,
   isSeenUrl,
+  maintainPublicationQueue,
   markContentPolicyExcluded,
   markPrefilterRejected,
-  recordToAnalyzed,
   saveNewsRecord,
   migrateObservationsFromNews,
   saveObservation,
   analyzedToObservation,
   syncPublishedToNews,
 } from "../storage/newsStore.js";
+import { meetsQueueMinScore } from "../utils/queueScore.js";
 import { getEnabledSources, loadSettings } from "../storage/settingsStore.js";
 import {
   countPostsToday,
@@ -23,7 +24,7 @@ import {
   loadPublished,
 } from "../storage/publishedStore.js";
 import { MAX_RU_POSTS_PER_DAY } from "../rss/sources.js";
-import { applyRuDailyCap, isRussianPublication } from "../utils/ruPublicationCap.js";
+import { applyRuDailyCap } from "../utils/ruPublicationCap.js";
 import { applyMinAiReserve } from "../utils/minAiQuota.js";
 import { selectForPublication } from "../utils/publicationSelect.js";
 import { pruneRssErrors, recordLastRun, setPipelineRunning } from "../storage/stateStore.js";
@@ -34,6 +35,7 @@ import { prefilterNews } from "../utils/prefilter.js";
 import { isWithinLast24Hours } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
 import { endTask, isInjectionRunning, tryBeginTask } from "./activeTask.js";
+import { publishFromQueue } from "./publishFromQueue.js";
 import { publishPosts } from "./publishPosts.js";
 
 export type RunTrigger = "cron" | "manual" | "telegram" | "dashboard";
@@ -41,6 +43,8 @@ export type RunTrigger = "cron" | "manual" | "telegram" | "dashboard";
 export interface RunOptions {
   trigger: RunTrigger;
   dryRun?: boolean;
+  /** Только RSS + очередь, без публикации (cron при равномерной публикации) */
+  collectOnly?: boolean;
 }
 
 export interface PipelineResult {
@@ -75,12 +79,15 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
 
   const settings = await loadSettings();
   const dryRun = options.dryRun ?? settings.dryRun;
+  const collectOnly =
+    options.collectOnly ??
+    (settings.publishEvenSpread && options.trigger === "cron");
   let publishedCount = 0;
   let observationsSaved = 0;
   let queuedNew = 0;
 
   try {
-    logger.info(`Starting pipeline (${options.trigger}, dryRun=${dryRun})...`);
+    logger.info(`Starting pipeline (${options.trigger}, dryRun=${dryRun}, collectOnly=${collectOnly})...`);
 
     const enabledSources = getEnabledSources(settings);
     await pruneRssErrors(enabledSources.map((s) => s.name));
@@ -117,67 +124,36 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
     }
     logger.info(`RU sources cap: max ${MAX_RU_POSTS_PER_DAY}/day (today: ${ruPostsToday})`);
 
+    if (!dryRun) {
+      const pruned = await maintainPublicationQueue();
+      if (pruned.expired > 0 || pruned.dropped > 0) {
+        logger.info(
+          `Queue pruned: ${pruned.expired} expired, ${pruned.dropped} dropped, ${pruned.remaining} active`
+        );
+      }
+    }
+
     const queueBefore = await getPublishQueue();
     if (queueBefore.length > 0) {
       logger.info(`Publish queue: ${queueBefore.length} item(s) waiting`);
     }
 
-    if (postsThisRun === 0) {
+    if (collectOnly) {
+      logger.info("Collect-only mode — RSS and queue, no publishing (even spread handles posts)");
+    }
+
+    if (!collectOnly && postsThisRun === 0) {
       logger.info(
         `Daily publish limit reached (${postsToday}/${settings.maxPostsPerDay}), will still check sources and save observations`
       );
-    } else if (queueBefore.length > 0) {
-      const queueAnalyzed = queueBefore.map((record) => recordToAnalyzed(record));
-      const queuePick = selectForPublication(
-        queueAnalyzed,
-        postsThisRun,
-        quotaMax,
-        categoryCounts,
-        horizonCounts,
-        horizonMix
-      );
-      if (queuePick.skippedByQuota > 0) {
-        logger.info(
-          `Category quota: ${queuePick.skippedByQuota} queued item(s) deferred to other categories`
-        );
-      }
-      if (queuePick.pickedFuture > 0 || queuePick.pickedNow > 0) {
-        logger.info(
-          `Horizon mix: ${queuePick.pickedNow} now + ${queuePick.pickedFuture} long-term from queue`
-        );
-      }
-      const minAiQueue = applyMinAiReserve(
-        queueAnalyzed,
-        queuePick.selected,
-        postsThisRun,
-        {
-          minAiPostsPerDay: minAi,
-          maxPerCategory: quotaMax,
-          remainingToday,
-          maxPostsPerRun: settings.maxPostsPerRun,
-          categoryCounts,
-        }
-      );
-      if (minAiQueue.injected) {
-        logger.info(`AI minimum: reserved slot for "${minAiQueue.title}"`);
-      }
-      const queueCap = applyRuDailyCap(minAiQueue.selected, ruPostsToday);
-      if (queueCap.deferred > 0) {
-        logger.info(
-          `RU cap: ${queueCap.deferred} queued item(s) deferred (max ${MAX_RU_POSTS_PER_DAY}/day)`
-        );
-      }
-      const fromQueue = queueCap.items;
-      if (fromQueue.length > 0) {
-        logger.info(`Publishing ${fromQueue.length} item(s) from queue...`);
-        publishedCount += await publishPosts(fromQueue, { dryRun, postType: "article" });
-        if (!dryRun) {
-          ruPostsToday += fromQueue.filter((item) => isRussianPublication(item)).length;
-        }
-      }
+    } else if (!collectOnly && queueBefore.length > 0) {
+      const fromQueueResult = await publishFromQueue({ limit: postsThisRun, dryRun });
+      publishedCount += fromQueueResult.publishedCount;
+    } else if (collectOnly && queueBefore.length > 0) {
+      logger.info(`Collect-only: ${queueBefore.length} item(s) waiting in queue`);
     }
 
-    let slotsLeft = Math.max(0, postsThisRun - publishedCount);
+    let slotsLeft = collectOnly ? 0 : Math.max(0, postsThisRun - publishedCount);
     const sources = getEnabledSources(settings);
 
     const allNews = await fetchAllNews(sources);
@@ -276,15 +252,40 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       );
     }
 
+    const queueEligible: typeof publishable = [];
+    const belowThreshold: typeof publishable = [];
+
     for (const item of publishable) {
-      if (!dryRun) {
-        await saveNewsRecord(analyzedToRecord(item));
+      if (meetsQueueMinScore(item.analysis.level, item.analysis.score)) {
+        queueEligible.push(item);
+      } else {
+        belowThreshold.push(item);
       }
+    }
+
+    for (const item of belowThreshold) {
+      if (!dryRun) {
+        await saveObservation(analyzedToObservation(item));
+      }
+      observationsSaved++;
+      logger.info(
+        `Below queue threshold: "${item.news.title}" (${item.analysis.level}, score ${item.analysis.score})`
+      );
+    }
+
+    for (const item of queueEligible) {
+      if (!dryRun) {
+        await saveNewsRecord(analyzedToQueuedRecord(item));
+      }
+    }
+
+    if (!dryRun && queueEligible.length > 0) {
+      await maintainPublicationQueue();
     }
 
     const updatedHorizon = await getHorizonCountsToday();
     const newPick = selectForPublication(
-      publishable,
+      queueEligible,
       slotsLeft,
       quotaMax,
       categoryCounts,
@@ -302,7 +303,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       );
     }
     const minAiNew = applyMinAiReserve(
-      publishable,
+      queueEligible,
       newPick.selected,
       slotsLeft,
       {
@@ -323,14 +324,14 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       );
     }
     const toPublish = newCap.items;
-    queuedNew = Math.max(0, publishable.length - toPublish.length);
+    queuedNew = Math.max(0, queueEligible.length - toPublish.length);
 
-    if (toPublish.length > 0) {
+    if (!collectOnly && toPublish.length > 0) {
       logger.info(`Selected ${toPublish.length} new item(s) for publication`);
       publishedCount += await publishPosts(toPublish, { dryRun, postType: "article" });
       slotsLeft = Math.max(0, slotsLeft - toPublish.length);
-    } else if (publishable.length > 0) {
-      logger.info(`Queued ${publishable.length} publishable item(s) for later`);
+    } else if (queueEligible.length > 0) {
+      logger.info(`Queued ${queueEligible.length} eligible item(s) for later`);
     }
 
     const queueAfter = await countPublishQueue();

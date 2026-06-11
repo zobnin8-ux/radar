@@ -30,7 +30,8 @@ if not exist dist\index.js (
 )
 
 echo Бот запущен. Не закрывайте это окно.
-echo Панель: смотрите /panel в Telegram
+echo Панель: /panel в Telegram ^(http://IP-ПК:3847^)
+echo Если с телефона не открывается: npm run dashboard:firewall:admin
 echo.
 call npm start
 

@@ -53,6 +53,43 @@ function stripHtml(text: string): string {
     .trim();
 }
 
+function extractImageUrl(item: Parser.Item): string | undefined {
+  const enclosure = item.enclosure;
+  if (enclosure?.url) {
+    const type = (enclosure.type ?? "").toLowerCase();
+    if (!type || type.startsWith("image/")) {
+      return enclosure.url.trim();
+    }
+  }
+
+  const media = (item as { "media:content"?: { $?: { url?: string; type?: string } } })["media:content"];
+  const mediaUrl = media?.$?.url;
+  if (mediaUrl) {
+    const mediaType = (media?.$?.type ?? "").toLowerCase();
+    if (!mediaType || mediaType.startsWith("image/")) {
+      return mediaUrl.trim();
+    }
+  }
+
+  const thumbnail = (item as { "media:thumbnail"?: { $?: { url?: string } } })["media:thumbnail"];
+  if (thumbnail?.$?.url) {
+    return thumbnail.$.url.trim();
+  }
+
+  const content =
+    item.content ??
+    (item as Parser.Item & { "content:encoded"?: string })["content:encoded"] ??
+    "";
+  if (typeof content === "string") {
+    const match = content.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (match?.[1]?.startsWith("http")) {
+      return match[1].trim();
+    }
+  }
+
+  return undefined;
+}
+
 function getFeedUrls(source: RssSourceConfig): string[] {
   const urls = [source.url, ...(source.feedUrls ?? [])];
   return [...new Set(urls)];
@@ -96,6 +133,7 @@ async function fetchFromFeedUrl(
       sourceTier: tier,
       trustScore,
       language: source.language,
+      imageUrl: extractImageUrl(item),
     });
   }
 

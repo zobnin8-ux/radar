@@ -7,11 +7,48 @@ export interface GadgetPrefilterResult {
 
 const REJECT_PATTERNS: { id: string; label: string; test: (text: string) => boolean }[] = [
   {
+    id: "ads-platform",
+    label: "реклама/retail media",
+    test: (t) =>
+      /\b(retail media|advertising platform|ad campaign|ad tech|google ads|youtube ads|walmart connect|retail advertising|marketing platform|demand-side platform|programmatic ads)\b/i.test(
+        t
+      ),
+  },
+  {
+    id: "partnership",
+    label: "партнёрство без устройства",
+    test: (t) =>
+      /\b(partner(ed|ship)?|collaborat(e|ion)|team(s)? up|join forces|strategic alliance)\b/i.test(
+        t
+      ) &&
+      !/\b(device|phone|headset|glasses|watch|laptop|tablet|robot|drone|console|speaker|chip|processor|hardware|gadget|wearable|vr\b|ar\b|xr\b)\b/i.test(
+        t
+      ),
+  },
+  {
+    id: "saas-cloud",
+    label: "SaaS/облако/API",
+    test: (t) =>
+      /\b(SaaS|cloud service|API launch|software platform|web service|subscription service|developer platform)\b/i.test(
+        t
+      ) &&
+      !/\b(hardware|physical device|new device|headset|phone|laptop|robot|drone)\b/i.test(t),
+  },
+  {
+    id: "software-only",
+    label: "ПО без устройства",
+    test: (t) =>
+      /\b(software update|app update|firmware for existing|feature rollout|new feature in app)\b/i.test(
+        t
+      ) && !/\b(new model|new device|announces|unveils|launch(es)?)\b/i.test(t),
+  },
+  {
     id: "price",
     label: "цена/скидки",
     test: (t) =>
-      /\b(price drop|price cut|on sale|%\s*off|discount|deal of the|cyber monday|black friday|prime day)\b/i.test(t) ||
-      /\b(скидк|распродаж)\b/i.test(t),
+      /\b(price drop|price cut|on sale|%\s*off|discount|deal of the|cyber monday|black friday|prime day)\b/i.test(
+        t
+      ) || /\b(скидк|распродаж)\b/i.test(t),
   },
   {
     id: "cosmetic",
@@ -25,7 +62,7 @@ const REJECT_PATTERNS: { id: string; label: string; test: (text: string) => bool
     label: "маркетинг",
     test: (t) =>
       /\b(pre[- ]order now|available today at|starting at \$)\b/i.test(t) &&
-      !/\b(chip|processor|ai|neural|battery|display|sensor)\b/i.test(t),
+      !/\b(chip|processor|ai|neural|battery|display|sensor|device|headset|phone)\b/i.test(t),
   },
   {
     id: "listicle",
@@ -39,8 +76,8 @@ const REJECT_PATTERNS: { id: string; label: string; test: (text: string) => bool
   },
 ];
 
-const GADGET_HINT =
-  /\b(phone|smartphone|iphone|pixel|galaxy|laptop|notebook|tablet|watch|headphone|earbud|vr|ar\b|quest|glasses|console|playstation|xbox|switch|drone|robot|speaker|tv\b|monitor|gpu|chip|processor|npu|battery|display|modem|router|ev\b|scooter|framework|nothing\b)/i;
+const DEVICE_HINT =
+  /\b(phone|smartphone|iphone|pixel|galaxy|laptop|notebook|tablet|watch|headphone|earbud|vr|ar\b|xr\b|quest|glasses|headset|console|playstation|xbox|switch|drone|robot|speaker|tv\b|monitor|gpu|chip|processor|npu|battery|display|modem|router|ev\b|scooter|framework|nothing\b|wearable|ring|band|camera|sensor|charger|station|thermostat|vacuum|oven|fridge|glucose|medical device|hearing aid|wheelchair|exoskeleton|e-bike|scooter|vision pro|quest|pico|ray-ban|meta quest)\b/i;
 
 export function prefilterGadgetNews(items: NewsItem[]): GadgetPrefilterResult {
   const passed: NewsItem[] = [];
@@ -62,8 +99,8 @@ export function prefilterGadgetNews(items: NewsItem[]): GadgetPrefilterResult {
       continue;
     }
 
-    if (!GADGET_HINT.test(text)) {
-      rejected.push({ item, reason: "не похоже на устройство" });
+    if (!DEVICE_HINT.test(text)) {
+      rejected.push({ item, reason: "не похоже на физическое устройство" });
       continue;
     }
 

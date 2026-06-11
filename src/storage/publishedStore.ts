@@ -52,6 +52,14 @@ function isQuotaPost(record: PublishedRecord): boolean {
   );
 }
 
+export async function countPostsSince(since: Date): Promise<number> {
+  const records = await loadPublished();
+  const sinceMs = since.getTime();
+  return records.filter(
+    (r) => isQuotaPost(r) && new Date(r.postedAt).getTime() >= sinceMs
+  ).length;
+}
+
 export async function countPostsToday(now = new Date()): Promise<number> {
   const records = await loadPublished();
   return records.filter(

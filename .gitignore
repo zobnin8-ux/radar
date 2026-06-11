@@ -14,3 +14,5 @@ data/observations.json
 data/trends.json
 data/gittrend.json
 data/in-the-box.json
+data/in-the-box-rejections.json
+data/queue-archive.json

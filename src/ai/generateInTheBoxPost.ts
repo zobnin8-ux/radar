@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import type { AnalyzedGadget } from "./analyzeGadget.js";
 import { VISUAL_IDENTITY } from "../visual/identity.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
-import { shouldIncludeObserver } from "../utils/observerComment.js";
+import { generateObserverComment } from "./generateObserverComment.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -12,27 +12,29 @@ const openai = new OpenAI({
   timeout: 60_000,
 });
 
-const MAX_POST_LENGTH = 1200;
+const MAX_POST_LENGTH = 1020;
 
 const postSchema = z.object({
   headline: z.string(),
-  whatHappened: z.string(),
-  whatInteresting: z.string(),
-  whyImportant: z.string(),
+  whatItIs: z.string(),
+  whatInside: z.string(),
+  whyInteresting: z.string(),
 });
 
 const SYSTEM_PROMPT = `You write posts for the Russian Telegram rubric "Будущее в коробке".
 
-Focus on TECHNOLOGY INSIDE the device, not the gadget as a product review.
+This rubric is ONLY about a specific physical device or gadget — not platforms, services, or partnerships.
+
+The post must make it obvious WHAT device is being discussed.
 
 Tone: smart, concise, natural Russian, no hype, no "революционный смартфон".
 
 Return JSON:
 {
-  "headline": "Russian headline",
-  "whatHappened": "1-2 sentences — what was announced",
-  "whatInteresting": "1-2 sentences — why the technology inside matters, not the shell",
-  "whyImportant": "1-2 sentences — could this become mass standard in a few years?"
+  "headline": "Russian headline naming the device",
+  "whatItIs": "1-2 sentences — what physical device this is",
+  "whatInside": "1-2 sentences — key technology inside the device",
+  "whyInteresting": "1-2 sentences — why this device/tech matters for the future"
 }`;
 
 export interface InTheBoxPostResult {
@@ -56,15 +58,17 @@ export async function generateInTheBoxPost(
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Write the rubric post:
+        content: `Write the rubric post about this PHYSICAL DEVICE:
 
 Source: ${news.source}
 Title: ${news.title}
 URL: ${news.url}
 Description: ${news.description ?? "(none)"}
+Device: ${analysis.deviceName}
+Device type: ${analysis.deviceType ?? "(unknown)"}
 Technology inside: ${analysis.technologyInside}
-Impact horizon: ${analysis.impactHorizon}
-Editor note: ${analysis.reason}`,
+Why it is a device: ${analysis.whyThisIsADevice ?? analysis.reason}
+Impact horizon: ${analysis.impactHorizon}`,
       },
     ],
   });
@@ -81,28 +85,30 @@ Editor note: ${analysis.reason}`,
   }
 
   const esc = escapeTelegramHtml;
-  const observationBlock = shouldIncludeObserver(
-    analysis.observerComment,
-    parts.whyImportant,
-    analysis.reason
-  )
-    ? `\n\n📡 <b>Наблюдение:</b>\n${esc(analysis.observerComment!)}`
+  const observerComment = await generateObserverComment({
+    title: analysis.deviceName ?? news.title,
+    source: news.source,
+    whatHappened: parts.whatItIs,
+    whyImportant: parts.whyInteresting,
+    level: "signal",
+    technology: analysis.technologyInside ?? undefined,
+  });
+
+  const observationBlock = observerComment
+    ? `\n\n📡 <b>Наблюдение:</b>\n${esc(observerComment)}`
     : "";
 
   const post = `${identity.symbol} <b>${esc(identity.label)}</b>
 <b>${esc(parts.headline)}</b>
 
-<b>Что произошло:</b>
-${esc(parts.whatHappened)}
+<b>Что это:</b>
+${esc(parts.whatItIs)}
 
-<b>Что интересно:</b>
-${esc(parts.whatInteresting)}
+<b>Что внутри:</b>
+${esc(parts.whatInside)}
 
-📦 <b>Технология внутри:</b>
-${esc(analysis.technologyInside)}
-
-<b>Почему это важно:</b>
-${esc(parts.whyImportant)}${observationBlock}
+<b>Почему это интересно:</b>
+${esc(parts.whyInteresting)}${observationBlock}
 
 <b>Источник:</b> ${esc(news.source)}
 <b>Ссылка:</b> ${esc(news.url)}`;

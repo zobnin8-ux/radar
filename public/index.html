@@ -27,7 +27,7 @@
       min-height: 100vh;
       padding: 16px;
       padding-bottom: calc(var(--nav-h) + 24px);
-      max-width: 480px;
+      max-width: 720px;
       margin: 0 auto;
     }
     .hidden { display: none !important; }
@@ -322,8 +322,8 @@
   <div class="logo">📡</div>
   <div class="login-title">Радар будущего</div>
   <p class="login-hint">
-    Панель управления каналом.<br>
-    Работает только дома, в той же Wi‑Fi, что и компьютер.
+    Веб-панель на этом компьютере.<br>
+    Откройте из Telegram (/panel) или в браузере: <b>http://127.0.0.1:3847</b>
   </p>
   <div class="card">
     <div class="field" style="margin:0">
@@ -421,9 +421,9 @@
     </div>
 
     <div class="card">
-      <div class="card-title">Управление с телефона через Telegram</div>
+      <div class="card-title">Или через Telegram</div>
       <p style="font-size:0.85rem;color:var(--muted);margin-bottom:10px">
-        Напишите боту в <b>личные сообщения</b> (не в канал):
+        Те же команды в личке бота:
       </p>
       <div class="help-cmd"><code>/run</code><span>опубликовать</span></div>
       <div class="help-cmd"><code>/inject 5</code><span>инъекция из очереди</span></div>
@@ -451,7 +451,7 @@
 
     <div class="card">
       <div class="card-title">📥 Очередь публикации</div>
-      <p class="section-hint">Готовы к выходу в канал (уровни 2–4). Порядок — по приоритету.</p>
+      <p class="section-hint">Топ актуальных кандидатов (уровни 2–4, до 50). Порядок — по рейтингу ★.</p>
       <div id="queue-list"><div class="empty"><div class="icon">⏳</div>Загрузка...</div></div>
     </div>
 
@@ -497,9 +497,9 @@
         <input type="number" id="set-max-day" min="1" max="20" inputmode="numeric">
       </div>
       <div class="field">
-        <label>Сколько постов за один запуск</label>
+        <label>Сколько постов за один тик</label>
         <input type="number" id="set-max-run" min="1" max="10" inputmode="numeric">
-        <p class="hint">Бот выберет лучшие новости по оценке AI</p>
+        <p class="hint">Максимум за одну публикацию из очереди (равномерный график или /run)</p>
       </div>
       <div class="field">
         <label>Макс. постов одной категории в день</label>
@@ -517,8 +517,21 @@
         <p class="hint">1 — хотя бы один значимый AI (уровень 2–4). Tier-1/impact — сразу. 0 = выкл</p>
       </div>
       <div class="field">
-        <label>Как часто проверять новости</label>
+        <label>Как часто проверять RSS</label>
         <select id="set-schedule"></select>
+        <p class="hint">Сбор новостей и пополнение очереди (не публикация)</p>
+      </div>
+      <div class="field">
+        <label>Равномерная публикация из очереди</label>
+        <select id="set-even-spread">
+          <option value="true">Включена — лимит/день растянут по суткам</option>
+          <option value="false">Выключена — публиковать при проверке RSS</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Как часто публиковать из очереди</label>
+        <select id="set-publish-schedule"></select>
+        <p class="hint">При равномерной публикации: каждые N минут до дневного лимита</p>
       </div>
       <div class="field">
         <label>Режим работы</label>
@@ -832,7 +845,7 @@ function renderArchiveItems(items, emptyIcon, emptyText, showPosition) {
         <div class="post-meta">
           <span class="cat-badge">${esc(categoryLabel(item.category))}</span>
           ${esc(item.source)} · ${levelLabel(item.level)}
-          <span class="score-badge">${item.score}/10</span>
+          <span class="score-badge">${item.finalScore != null ? `★${item.finalScore.toFixed(1)}` : `${item.score}/10`}</span>
         </div>
         <div class="post-meta" style="margin-top:4px">
           ${horizonLabel(item.impactHorizon)} · ${timeAgo(item.discoveredAt)}
@@ -940,9 +953,23 @@ async function loadLogs() {
 const SCHEDULE_OPTIONS = {
   every_hour: { cron: '0 * * * *', label: 'Каждый час' },
   every_2h: { cron: '0 */2 * * *', label: 'Каждые 2 часа' },
+  every_3h: { cron: '0 */3 * * *', label: 'Каждые 3 часа' },
   every_6h: { cron: '0 */6 * * *', label: 'Каждые 6 часов' },
   daily_9: { cron: '0 9 * * *', label: 'Раз в день (в 9:00)' },
 };
+
+const PUBLISH_SCHEDULE_OPTIONS = {
+  every_30m: { cron: '*/30 * * * *', label: 'Каждые 30 минут' },
+  every_hour: { cron: '0 * * * *', label: 'Каждый час' },
+  every_2h: { cron: '0 */2 * * *', label: 'Каждые 2 часа' },
+};
+
+function cronToPublishPreset(cron) {
+  for (const [key, v] of Object.entries(PUBLISH_SCHEDULE_OPTIONS)) {
+    if (v.cron === cron) return key;
+  }
+  return 'every_30m';
+}
 
 function cronToPreset(cron) {
   for (const [key, v] of Object.entries(SCHEDULE_OPTIONS)) {
@@ -959,12 +986,19 @@ async function loadSettingsPanel() {
   document.getElementById('set-horizon-mix').value = settings.horizonMixPercent ?? 30;
   document.getElementById('set-min-ai').value = settings.minAiPostsPerDay ?? 1;
   document.getElementById('set-dry').value = String(settings.dryRun);
+  document.getElementById('set-even-spread').value = String(settings.publishEvenSpread !== false);
 
   const sel = document.getElementById('set-schedule');
   sel.innerHTML = Object.entries(SCHEDULE_OPTIONS).map(([key, v]) =>
     `<option value="${key}">${v.label}</option>`
   ).join('');
   sel.value = cronToPreset(settings.postIntervalCron);
+
+  const pubSel = document.getElementById('set-publish-schedule');
+  pubSel.innerHTML = Object.entries(PUBLISH_SCHEDULE_OPTIONS).map(([key, v]) =>
+    `<option value="${key}">${v.label}</option>`
+  ).join('');
+  pubSel.value = cronToPublishPreset(settings.publishIntervalCron || '*/30 * * * *');
 
   document.getElementById('rss-list').innerHTML = settings.rssSources.map((s, i) =>
     `<div class="rss-item">
@@ -978,6 +1012,8 @@ async function saveSettings() {
   if (!settings) await loadSettingsPanel();
   const preset = document.getElementById('set-schedule').value;
   const cron = SCHEDULE_OPTIONS[preset]?.cron || '0 * * * *';
+  const publishPreset = document.getElementById('set-publish-schedule').value;
+  const publishCron = PUBLISH_SCHEDULE_OPTIONS[publishPreset]?.cron || '*/30 * * * *';
   const rssSources = settings.rssSources.map((s, i) => ({
     ...s,
     enabled: document.getElementById('rss-' + i)?.checked ?? s.enabled
@@ -994,6 +1030,8 @@ async function saveSettings() {
         horizonMixPercent: +document.getElementById('set-horizon-mix').value,
         minAiPostsPerDay: +document.getElementById('set-min-ai').value,
         postIntervalCron: cron,
+        publishEvenSpread: document.getElementById('set-even-spread').value === 'true',
+        publishIntervalCron: publishCron,
         dryRun: document.getElementById('set-dry').value === 'true',
         rssSources
       })

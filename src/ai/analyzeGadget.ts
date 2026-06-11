@@ -2,6 +2,12 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { config } from "../config.js";
 import { IMPACT_HORIZONS, type NewsItem } from "../types.js";
+import {
+  hasFeedImage,
+  isLikelyNonDeviceImageUrl,
+  type DeviceImageSource,
+  type DeviceImageType,
+} from "../utils/deviceImage.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -12,20 +18,54 @@ const openai = new OpenAI({
 const BATCH_SIZE = 15;
 const MIN_PUBLISH_SCORE = 6;
 
+const IMAGE_TYPES = [
+  "official_photo",
+  "official_render",
+  "presentation_photo",
+  "user_photo",
+  "in_environment",
+  "unknown",
+] as const;
+
+const IMAGE_SOURCES = ["manufacturer", "media", "user", "unknown"] as const;
+
 const gadgetAnalysisSchema = z.object({
   index: z.number(),
-  publishable: z.boolean(),
-  score: z.coerce.number().min(1).max(10),
-  technologyInside: z.string(),
-  impactHorizon: z.enum(IMPACT_HORIZONS),
+  boxCandidate: z.boolean(),
+  isPhysicalDevice: z.boolean(),
+  canBePutInABox: z.boolean(),
+  isConsumerFacing: z.boolean().optional(),
+  deviceType: z.string().nullable().optional(),
+  deviceName: z.string().nullable().optional(),
+  technologyInside: z.string().nullable().optional(),
+  whyThisIsADevice: z.string().nullable().optional(),
+  rejectReason: z.string().nullable().optional(),
+  hasDeviceImage: z.boolean().optional(),
+  imageType: z.enum(IMAGE_TYPES).optional(),
+  imageSource: z.enum(IMAGE_SOURCES).optional(),
+  interestingForRadar: z.boolean().optional(),
+  score: z.coerce.number().min(1).max(10).optional(),
+  impactHorizon: z.enum(IMPACT_HORIZONS).optional(),
   reason: z.string(),
   observerComment: z.union([z.string(), z.null()]).optional(),
 });
 
 export interface GadgetAnalysis {
+  boxCandidate: boolean;
+  isPhysicalDevice: boolean;
+  canBePutInABox: boolean;
+  isConsumerFacing: boolean;
+  deviceType: string | null;
+  deviceName: string | null;
+  technologyInside: string | null;
+  whyThisIsADevice: string | null;
+  rejectReason: string | null;
+  hasDeviceImage: boolean;
+  imageType: DeviceImageType | null;
+  imageSource: DeviceImageSource | null;
+  interestingForRadar: boolean;
   publishable: boolean;
   score: number;
-  technologyInside: string;
   impactHorizon: (typeof IMPACT_HORIZONS)[number];
   reason: string;
   observerComment: string | null;
@@ -36,99 +76,256 @@ export interface AnalyzedGadget {
   analysis: GadgetAnalysis;
 }
 
-const SYSTEM_PROMPT = `You are the gadget technology editor for "Радар будущего" rubric "Будущее в коробке".
-
-This is NOT a smartphone review channel. We care about TECHNOLOGY INSIDE consumer devices — what became mass-market and may matter in several years.
-
-For EACH item answer:
-1. What technology here is genuinely new (not cosmetic)?
-2. Why did it appear now?
-3. Could it become a standard in a few years?
-4. What in the device matters more than the device itself?
-
-REJECT (publishable: false) if:
-- new color, case, price change, sale, marketing fluff
-- cosmetic update without real technology
-- rumor without substance
-
-ACCEPT only if there is a clear technologyInside worth explaining.
-
-Return JSON:
-{
-  "analyses": [
-    {
-      "index": 0,
-      "publishable": true,
-      "score": 8,
-      "technologyInside": "short label in Russian, e.g. локальные AI-модели на устройстве",
-      "impactHorizon": "1-3 years",
-      "reason": "brief English editor note",
-      "observerComment": "short Russian human observation or null"
-    }
-  ]
+export interface GadgetEvaluation {
+  news: NewsItem;
+  accepted: boolean;
+  analysis: GadgetAnalysis;
 }
 
-score = significance of the technology (1-10). Only publishable:true with score >= 6 are candidates.
-technologyInside must be in Russian, concise (2-6 words).
-observerComment: optional Russian, max 40 words, null if nothing interesting.`;
+export interface AnalyzeGadgetsResult {
+  accepted: AnalyzedGadget[];
+  evaluated: GadgetEvaluation[];
+}
+
+const SYSTEM_PROMPT = `You are the strict gatekeeper for "Радар будущего" rubric "Будущее в коробке" (Future in a Box).
+
+This is a VISUAL rubric about physical devices. Publication requires BOTH:
+1) boxCandidate true (real physical device)
+2) hasDeviceImage true (feed image shows the actual device)
+
+CRITICAL: Can you open a box and take out a physical device? If NO — boxCandidate false.
+
+ALLOW devices: phones, laptops, tablets, watches, rings, AR/VR headsets, headphones, cameras, drones, robots, wearables, consoles, smart appliances, etc.
+
+REJECT boxCandidate false: ads, partnerships, SaaS, APIs, software-only, B2B without device.
+
+For EACH item, after device check, evaluate the RSS feed image URL:
+
+ALLOW hasDeviceImage true:
+- official product photo/render
+- device on stage, in hands, on desk, in use
+
+REJECT hasDeviceImage false:
+- company logo, press banner, website screenshot, article screenshot
+- partnership graphic, service poster, abstract AI art without product
+- technology image without the device itself
+- no image in feed
+
+Example ACCEPT:
+{
+  "index": 0,
+  "boxCandidate": true,
+  "isPhysicalDevice": true,
+  "canBePutInABox": true,
+  "deviceName": "Apple Vision Pro",
+  "deviceType": "XR headset",
+  "technologyInside": "пространственные интерфейсы",
+  "hasDeviceImage": true,
+  "imageType": "official_photo",
+  "imageSource": "manufacturer",
+  "score": 8,
+  "impactHorizon": "1-3 years",
+  "reason": "editor note",
+  "rejectReason": null
+}
+
+Example device but NO image:
+{
+  "index": 0,
+  "boxCandidate": true,
+  "isPhysicalDevice": true,
+  "canBePutInABox": true,
+  "hasDeviceImage": false,
+  "rejectReason": "No device image available",
+  "interestingForRadar": false,
+  "reason": "device news without product photo"
+}
+
+Example NOT a device:
+{
+  "index": 0,
+  "boxCandidate": false,
+  "isPhysicalDevice": false,
+  "canBePutInABox": false,
+  "hasDeviceImage": false,
+  "rejectReason": "Retail advertising platform",
+  "interestingForRadar": true,
+  "reason": "tech news but not gadget"
+}
+
+deviceName and technologyInside in Russian when boxCandidate true.
+interestingForRadar: true ONLY for non-device tech news — NEVER for device without image.
+
+Return JSON: { "analyses": [ ... ] }`;
 
 function formatCandidates(items: NewsItem[]): string {
   return items
     .map((item, i) => {
       const tier = item.sourceTier === 1 ? "PRIMARY" : "MEDIA";
+      const imageLine = item.imageUrl
+        ? `Feed image: ${item.imageUrl}`
+        : "Feed image: (none in RSS)";
       return `[${i}] Source: ${item.source} [${tier}]
 Title: ${item.title}
 URL: ${item.url}
 Published: ${item.publishedAt.toISOString()}
+${imageLine}
 Description: ${item.description ?? "(none)"}`;
     })
     .join("\n\n");
 }
 
-function parseResponse(content: string, batch: NewsItem[]): AnalyzedGadget[] {
+function evaluateImageFromMetadata(
+  data: z.infer<typeof gadgetAnalysisSchema>,
+  news: NewsItem
+): { hasDeviceImage: boolean; rejectReason: string | null } {
+  if (!hasFeedImage(news)) {
+    return { hasDeviceImage: false, rejectReason: "No device image available" };
+  }
+
+  if (isLikelyNonDeviceImageUrl(news.imageUrl)) {
+    return {
+      hasDeviceImage: false,
+      rejectReason: "Feed image looks like logo/banner, not device",
+    };
+  }
+
+  if (data.hasDeviceImage === false) {
+    return {
+      hasDeviceImage: false,
+      rejectReason: data.rejectReason?.trim() || "No actual device image found",
+    };
+  }
+
+  if (data.hasDeviceImage !== true) {
+    return {
+      hasDeviceImage: false,
+      rejectReason: "Device image not confirmed",
+    };
+  }
+
+  return { hasDeviceImage: true, rejectReason: null };
+}
+
+function passesBoxGate(
+  data: z.infer<typeof gadgetAnalysisSchema>,
+  news: NewsItem
+): { ok: boolean; rejectReason: string | null; hasDeviceImage: boolean } {
+  if (!data.boxCandidate || !data.isPhysicalDevice || !data.canBePutInABox) {
+    return {
+      ok: false,
+      hasDeviceImage: false,
+      rejectReason:
+        data.rejectReason?.trim() ||
+        "Not a physical device suitable for «Будущее в коробке»",
+    };
+  }
+
+  if (!data.deviceName?.trim() || !data.technologyInside?.trim()) {
+    return {
+      ok: false,
+      hasDeviceImage: false,
+      rejectReason: "Missing device name or technology inside",
+    };
+  }
+
+  const score = data.score ?? 0;
+  if (score < MIN_PUBLISH_SCORE) {
+    return {
+      ok: false,
+      hasDeviceImage: false,
+      rejectReason: `Score too low (${score})`,
+    };
+  }
+
+  const imageCheck = evaluateImageFromMetadata(data, news);
+  if (!imageCheck.hasDeviceImage) {
+    return {
+      ok: false,
+      hasDeviceImage: false,
+      rejectReason: imageCheck.rejectReason,
+    };
+  }
+
+  return { ok: true, rejectReason: null, hasDeviceImage: true };
+}
+
+function toAnalysis(
+  data: z.infer<typeof gadgetAnalysisSchema>,
+  news: NewsItem,
+  accepted: boolean,
+  finalRejectReason: string | null,
+  hasDeviceImage: boolean
+): GadgetAnalysis {
+  const score = Math.min(10, Math.max(1, Math.round(data.score ?? 1)));
+  const deviceWithoutImage =
+    data.boxCandidate && data.isPhysicalDevice && !hasDeviceImage;
+
+  return {
+    boxCandidate: data.boxCandidate,
+    isPhysicalDevice: data.isPhysicalDevice,
+    canBePutInABox: data.canBePutInABox,
+    isConsumerFacing: data.isConsumerFacing ?? false,
+    deviceType: data.deviceType?.trim() || null,
+    deviceName: data.deviceName?.trim() || null,
+    technologyInside: data.technologyInside?.trim() || null,
+    whyThisIsADevice: data.whyThisIsADevice?.trim() || null,
+    rejectReason: finalRejectReason,
+    hasDeviceImage,
+    imageType: hasDeviceImage ? (data.imageType ?? "unknown") : null,
+    imageSource: hasDeviceImage ? (data.imageSource ?? "unknown") : null,
+    interestingForRadar: deviceWithoutImage ? false : (data.interestingForRadar ?? false),
+    publishable: accepted,
+    score,
+    impactHorizon: data.impactHorizon ?? "1-3 years",
+    reason: data.reason.trim(),
+    observerComment: data.observerComment?.trim() || null,
+  };
+}
+
+function parseResponse(content: string, batch: NewsItem[]): GadgetEvaluation[] {
   const raw = JSON.parse(content) as { analyses?: unknown[] };
   const entries = Array.isArray(raw.analyses) ? raw.analyses : [];
-  const results: AnalyzedGadget[] = [];
+  const results: GadgetEvaluation[] = [];
 
   for (const entry of entries) {
     const parsed = gadgetAnalysisSchema.safeParse(entry);
     if (!parsed.success) continue;
 
-    const { index, publishable, score, technologyInside, impactHorizon, reason, observerComment } =
-      parsed.data;
-    if (index < 0 || index >= batch.length) continue;
-    if (!publishable || score < MIN_PUBLISH_SCORE) continue;
-    if (!technologyInside.trim()) continue;
+    const data = parsed.data;
+    if (data.index < 0 || data.index >= batch.length) continue;
 
-    const news = batch[index];
+    const news = batch[data.index];
     if (!news) continue;
 
-    results.push({
+    const gate = passesBoxGate(data, news);
+    const accepted = gate.ok;
+    const analysis = toAnalysis(
+      data,
       news,
-      analysis: {
-        publishable: true,
-        score: Math.min(10, Math.max(1, Math.round(score))),
-        technologyInside: technologyInside.trim(),
-        impactHorizon,
-        reason: reason.trim(),
-        observerComment: observerComment?.trim() || null,
-      },
-    });
+      accepted,
+      accepted ? null : gate.rejectReason,
+      gate.hasDeviceImage
+    );
+
+    results.push({ news, accepted, analysis });
   }
 
   return results;
 }
 
-export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzedGadget[]> {
-  if (candidates.length === 0) return [];
+export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzeGadgetsResult> {
+  if (candidates.length === 0) {
+    return { accepted: [], evaluated: [] };
+  }
 
-  const all: AnalyzedGadget[] = [];
+  const evaluated: GadgetEvaluation[] = [];
   const limit = Math.min(candidates.length, 45);
 
   for (let offset = 0; offset < limit; offset += BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + BATCH_SIZE);
 
-    logger.info(`OpenAI: analyzing ${batch.length} gadget candidates...`);
+    logger.info(`OpenAI: analyzing ${batch.length} in-the-box candidates...`);
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -138,7 +335,7 @@ export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzedGa
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `Analyze these ${batch.length} consumer tech items:\n\n${formatCandidates(batch)}`,
+          content: `Evaluate these ${batch.length} items. Reject if not a physical device OR if feed image does not show the device:\n\n${formatCandidates(batch)}`,
         },
       ],
     });
@@ -147,17 +344,22 @@ export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzedGa
     if (!content) continue;
 
     try {
-      all.push(...parseResponse(content, batch));
+      evaluated.push(...parseResponse(content, batch));
     } catch (error) {
       logger.error("Failed to parse gadget analysis", { error, content: content.slice(0, 500) });
     }
   }
 
-  return all.sort((a, b) => {
-    const trustDiff = (b.news.trustScore ?? 0.75) - (a.news.trustScore ?? 0.75);
-    if (trustDiff !== 0) return trustDiff;
-    return b.analysis.score - a.analysis.score;
-  });
+  const accepted = evaluated
+    .filter((e) => e.accepted)
+    .map((e) => ({ news: e.news, analysis: e.analysis }))
+    .sort((a, b) => {
+      const trustDiff = (b.news.trustScore ?? 0.75) - (a.news.trustScore ?? 0.75);
+      if (trustDiff !== 0) return trustDiff;
+      return b.analysis.score - a.analysis.score;
+    });
+
+  return { accepted, evaluated };
 }
 
 export function pickBestGadget(analyzed: AnalyzedGadget[]): AnalyzedGadget | null {

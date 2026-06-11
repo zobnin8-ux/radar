@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import { PUBLISHABLE_LEVELS, type AnalyzedNews } from "../types.js";
 import { VISUAL_IDENTITY } from "../visual/identity.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
+import { generateObserverComment } from "./generateObserverComment.js";
 import { shouldIncludeObserver } from "../utils/observerComment.js";
 import { findEarliestMatchingObservation } from "../utils/observationMatch.js";
 import { loadObservations } from "../storage/observationsStore.js";
@@ -122,6 +123,72 @@ ${esc(spheres)}
 <b>Ссылка:</b> ${esc(news.url)}`;
 }
 
+export type PostParts = z.infer<typeof postResponseSchema>;
+
+function buildPostUserMessage(analyzed: AnalyzedNews, ruSource: boolean): string {
+  const { news, analysis } = analyzed;
+  if (ruSource) {
+    return `Напиши пост по русскоязычной новости (без перевода):
+
+Источник: ${news.source}
+Заголовок: ${news.title}
+URL: ${news.url}
+Описание: ${news.description ?? "(нет)"}
+Уровень: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
+Категория: ${analysis.category}
+Технология: ${analysis.technology ?? "(нет)"}
+Горизонт: ${analysis.impactHorizon}
+Заметка редактора: ${analysis.reason}`;
+  }
+
+  return `Write a post based on this news:
+
+Source: ${news.source}
+Title: ${news.title}
+URL: ${news.url}
+Description: ${news.description ?? "(none)"}
+Maturity level: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
+Category: ${analysis.category}
+Technology: ${analysis.technology ?? "(none)"}
+Impact horizon: ${analysis.impactHorizon}
+Editor note: ${analysis.reason}`;
+}
+
+/** Черновик поста (без наблюдателя) — для очереди и публикации */
+export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostParts> {
+  const { news, analysis } = analyzed;
+  const ruSource = isRussianSource(news);
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.4,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: ruSource ? SYSTEM_PROMPT_RU_SOURCE : SYSTEM_PROMPT },
+      { role: "user", content: buildPostUserMessage(analyzed, ruSource) },
+    ],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenAI returned empty post response");
+  }
+
+  let parts: PostParts;
+  try {
+    parts = postResponseSchema.parse(JSON.parse(content));
+  } catch (error) {
+    logger.error("Failed to parse post generation response", { content, error });
+    throw new Error("Invalid post response from OpenAI");
+  }
+
+  if (ruSource) {
+    parts.headline = news.title;
+  }
+
+  return parts;
+}
+
 export async function generateTelegramPost(analyzed: AnalyzedNews): Promise<string | null> {
   const { news, analysis } = analyzed;
 
@@ -135,57 +202,7 @@ export async function generateTelegramPost(analyzed: AnalyzedNews): Promise<stri
     `OpenAI: generating post for "${news.title}" (${analysis.level}, lang=${ruSource ? "ru" : "en"})...`
   );
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.4,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: ruSource ? SYSTEM_PROMPT_RU_SOURCE : SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: ruSource
-          ? `Напиши пост по русскоязычной новости (без перевода):
-
-Источник: ${news.source}
-Заголовок: ${news.title}
-URL: ${news.url}
-Описание: ${news.description ?? "(нет)"}
-Уровень: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
-Категория: ${analysis.category}
-Технология: ${analysis.technology ?? "(нет)"}
-Горизонт: ${analysis.impactHorizon}
-Заметка редактора: ${analysis.reason}`
-          : `Write a post based on this news:
-
-Source: ${news.source}
-Title: ${news.title}
-URL: ${news.url}
-Description: ${news.description ?? "(none)"}
-Maturity level: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
-Category: ${analysis.category}
-Technology: ${analysis.technology ?? "(none)"}
-Impact horizon: ${analysis.impactHorizon}
-Editor note: ${analysis.reason}`,
-      },
-    ],
-  });
-
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error("OpenAI returned empty post response");
-  }
-
-  let parts: z.infer<typeof postResponseSchema>;
-  try {
-    parts = postResponseSchema.parse(JSON.parse(content));
-  } catch (error) {
-    logger.error("Failed to parse post generation response", { content, error });
-    throw new Error("Invalid post response from OpenAI");
-  }
-
-  if (ruSource) {
-    parts.headline = news.title;
-  }
+  const parts = await generatePostParts(analyzed);
 
   let signalConfirmedBlock = "";
   if (analysis.level === "impact" || analysis.level === "breakthrough") {
@@ -200,12 +217,22 @@ Editor note: ${analysis.reason}`,
     }
   }
 
-  const observationBlock = shouldIncludeObserver(
-    analysis.observerComment,
-    parts.whyImportant,
-    analysis.reason
-  )
-    ? `\n\n📡 <b>Наблюдение:</b>\n${escapeTelegramHtml(analysis.observerComment!)}`
+  let observerComment: string | null = analysis.observerComment ?? null;
+  if (!shouldIncludeObserver(observerComment, parts.whyImportant, parts.whatHappened)) {
+    observerComment = await generateObserverComment({
+      title: news.title,
+      source: news.source,
+      whatHappened: parts.whatHappened,
+      whyImportant: parts.whyImportant,
+      level: analysis.level,
+      technology: analysis.technology,
+    });
+  } else {
+    logger.info(`Using pre-generated observer for "${news.title.slice(0, 50)}…"`);
+  }
+
+  const observationBlock = observerComment
+    ? `\n\n📡 <b>Наблюдение:</b>\n${escapeTelegramHtml(observerComment)}`
     : "";
 
   const post = buildPost(analyzed, parts, signalConfirmedBlock, observationBlock);

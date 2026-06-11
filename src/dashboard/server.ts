@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
-import { getDashboardUrls } from "../utils/dashboardUrls.js";
+import { getPcDashboardUrl } from "../utils/dashboardUrls.js";
 import { isAnyTaskRunning, isInjectionRunning } from "../pipeline/activeTask.js";
 import { runPipeline } from "../pipeline/runPipeline.js";
 import {
@@ -52,6 +52,11 @@ async function handleApi(
   pathname: string,
   method: string
 ): Promise<void> {
+  if (pathname === "/api/health" && method === "GET") {
+    json(res, 200, { ok: true, port: config.DASHBOARD_PORT });
+    return;
+  }
+
   if (pathname === "/api/login" && method === "POST") {
     const body = (await readBody(req)) as { password?: string };
     if (body.password === config.DASHBOARD_PASSWORD) {
@@ -147,6 +152,9 @@ async function handleApi(
     if (body.postIntervalCron) {
       await reschedule();
     }
+    if (body.publishIntervalCron !== undefined || body.publishEvenSpread !== undefined) {
+      await reschedule();
+    }
     json(res, 200, next);
     return;
   }
@@ -235,7 +243,14 @@ export function startDashboard(): void {
     }
   });
 
+  server.on("request", (req) => {
+    const ip = req.socket.remoteAddress?.replace(/^::ffff:/, "") ?? "?";
+    if (ip !== "127.0.0.1" && ip !== "::1") {
+      logger.info(`Dashboard ${req.method ?? "GET"} ${req.url ?? "/"} from ${ip}`);
+    }
+  });
+
   server.listen(config.DASHBOARD_PORT, config.DASHBOARD_HOST, () => {
-    logger.info(`Dashboard running on port ${config.DASHBOARD_PORT} (links sent to Telegram)`);
+    logger.info(`Dashboard on ${getPcDashboardUrl()}`);
   });
 }

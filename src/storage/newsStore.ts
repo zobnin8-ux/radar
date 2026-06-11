@@ -4,7 +4,13 @@ import { getSourceLanguage } from "../rss/sources.js";
 import type { AnalyzedNews, NewsItem, NewsRecord } from "../types.js";
 import { PUBLISHABLE_LEVELS } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
-import { computeWeightedScore } from "../utils/sourceScore.js";
+import {
+  analyzedToQueuedRecord,
+  getQueuedRecordsFrom,
+  markRecordPublished,
+  processQueueRecords,
+  type QueueMaintainResult,
+} from "./queueManager.js";
 import { logger } from "../utils/logger.js";
 import { isAlreadyPublished, loadPublished } from "./publishedStore.js";
 import {
@@ -38,10 +44,14 @@ export async function loadNews(): Promise<NewsRecord[]> {
   return cache;
 }
 
-async function persist(records: NewsRecord[]): Promise<void> {
+export async function persistNews(records: NewsRecord[]): Promise<void> {
   await ensureDataFile();
   await writeFile(DATA_PATH, JSON.stringify(records, null, 2) + "\n", "utf-8");
   cache = records;
+}
+
+async function persist(records: NewsRecord[]): Promise<void> {
+  await persistNews(records);
 }
 
 export async function isKnownUrl(url: string): Promise<boolean> {
@@ -188,6 +198,7 @@ export async function saveNewsRecord(record: NewsRecord): Promise<void> {
       ...prev,
       ...record,
       discoveredAt: prev.discoveredAt,
+      queuedAt: record.queuedAt ?? prev.queuedAt,
       postedAt: record.postedAt ?? prev.postedAt,
     };
   } else {
@@ -219,23 +230,21 @@ export function recordToAnalyzed(record: NewsRecord): AnalyzedNews {
   };
 }
 
-function queueWeight(record: NewsRecord): number {
-  return computeWeightedScore({
-    level: record.level,
-    score: record.score,
-    sourceName: record.source,
-    trustScore: record.trustScore,
-    impactHorizon: record.impactHorizon,
-  });
+export async function maintainPublicationQueue(): Promise<QueueMaintainResult> {
+  const records = await loadNews();
+  const { records: next, result } = await processQueueRecords(records);
+  await persist(next);
+  return result;
 }
 
-/** Ready to publish but not yet posted — backlog for next runs */
+/** Ready to publish — smart queue (TTL, score cap, dynamic ranking) */
 export async function getPublishQueue(): Promise<NewsRecord[]> {
-  const records = await loadNews();
-  return records
-    .filter((r) => PUBLISHABLE_LEVELS.includes(r.level) && !r.postedAt)
-    .sort((a, b) => queueWeight(b) - queueWeight(a));
+  const { records } = await processQueueRecords(await loadNews());
+  await persist(records);
+  return getQueuedRecordsFrom(records);
 }
+
+export { analyzedToQueuedRecord };
 
 export async function countPublishQueue(): Promise<number> {
   const queue = await getPublishQueue();
@@ -253,8 +262,10 @@ export interface ArchiveItemView {
   category: NewsRecord["category"];
   level: NewsRecord["level"];
   score: number;
+  finalScore?: number;
   impactHorizon: NewsRecord["impactHorizon"];
   discoveredAt: string;
+  queuedAt?: string;
   sourceTier?: 1 | 2;
   postedAt?: string;
 }
@@ -267,8 +278,10 @@ function toArchiveItem(record: NewsRecord): ArchiveItemView {
     category: record.category,
     level: record.level,
     score: record.score,
+    finalScore: record.finalScore,
     impactHorizon: record.impactHorizon,
     discoveredAt: record.discoveredAt,
+    queuedAt: record.queuedAt,
     sourceTier: record.sourceTier,
     postedAt: record.postedAt,
   };
@@ -294,9 +307,7 @@ export async function getArchiveOverview(): Promise<ArchiveOverview> {
   const trendSince = new Date();
   trendSince.setDate(trendSince.getDate() - TREND_DAYS);
 
-  const queue = records
-    .filter((r) => PUBLISHABLE_LEVELS.includes(r.level) && !r.postedAt)
-    .sort((a, b) => queueWeight(b) - queueWeight(a));
+  const queue = await getPublishQueue();
 
   const obsRecords = await loadObservations();
   const observations = obsRecords
@@ -355,12 +366,8 @@ export async function getArchiveOverview(): Promise<ArchiveOverview> {
 
 export async function markPosted(url: string, postedAt: string): Promise<void> {
   const records = await loadNews();
-  const normalized = url.trim().toLowerCase();
-  const record = records.find((r) => r.url.trim().toLowerCase() === normalized);
-  if (record) {
-    record.postedAt = postedAt;
-    await persist(records);
-  }
+  markRecordPublished(records, url, postedAt);
+  await persist(records);
 }
 
 const MIN_TREND_SCORE = 5;

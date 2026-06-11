@@ -15,6 +15,10 @@ export interface AppSettings {
   /** Мин. значимых AI-постов в день (уровни 2–4, score ≥ 5); 0 = выкл */
   minAiPostsPerDay: number;
   postIntervalCron: string;
+  /** Равномерная публикация из очереди в течение суток */
+  publishEvenSpread: boolean;
+  /** Cron для публикации из очереди (отдельно от проверки RSS) */
+  publishIntervalCron: string;
   dryRun: boolean;
   paused: boolean;
   rssSources: RssSourceConfig[];
@@ -28,6 +32,8 @@ function defaultSettings(): AppSettings {
     horizonMixPercent: 30,
     minAiPostsPerDay: 1,
     postIntervalCron: config.POST_INTERVAL_CRON,
+    publishEvenSpread: true,
+    publishIntervalCron: config.PUBLISH_INTERVAL_CRON,
     dryRun: config.DRY_RUN,
     paused: false,
     rssSources: mergeRssSources([]),
@@ -63,6 +69,12 @@ export async function loadSettings(): Promise<AppSettings> {
   }
   if (cache.minAiPostsPerDay === undefined) {
     cache.minAiPostsPerDay = 1;
+  }
+  if (cache.publishEvenSpread === undefined) {
+    cache.publishEvenSpread = true;
+  }
+  if (cache.publishIntervalCron === undefined) {
+    cache.publishIntervalCron = config.PUBLISH_INTERVAL_CRON;
   }
   return cache;
 }

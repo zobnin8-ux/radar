@@ -10,6 +10,8 @@ export interface NewsItem {
   trustScore?: number;
   /** Язык источника; для ru — без перевода на всех этапах */
   language?: PublicationLanguage;
+  /** URL обложки/фото из RSS (enclosure или media) */
+  imageUrl?: string;
 }
 
 export const MATURITY_LEVELS = [
@@ -76,6 +78,16 @@ export interface AnalyzedNews {
   analysis: NewsAnalysis;
 }
 
+export const QUEUE_ITEM_STATUSES = [
+  "queued",
+  "published",
+  "expired",
+  "dropped_from_queue",
+  "archived",
+] as const;
+
+export type QueueItemStatus = (typeof QUEUE_ITEM_STATUSES)[number];
+
 export interface NewsRecord {
   url: string;
   title: string;
@@ -92,6 +104,11 @@ export interface NewsRecord {
   trustScore?: number;
   sourceTier?: 1 | 2;
   postedAt?: string;
+  queuedAt?: string;
+  expiresAt?: string;
+  finalScore?: number;
+  status?: QueueItemStatus;
+  archiveReason?: string | null;
 }
 
 export interface PublishedRecord {

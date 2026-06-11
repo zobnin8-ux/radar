@@ -1,6 +1,8 @@
 export const SCHEDULE_PRESETS = {
+  every_30m: { cron: "*/30 * * * *", label: "Каждые 30 минут" },
   every_hour: { cron: "0 * * * *", label: "Каждый час" },
   every_2h: { cron: "0 */2 * * *", label: "Каждые 2 часа" },
+  every_3h: { cron: "0 */3 * * *", label: "Каждые 3 часа" },
   every_6h: { cron: "0 */6 * * *", label: "Каждые 6 часов" },
   daily_9: { cron: "0 9 * * *", label: "Раз в день (в 9:00)" },
 } as const;

@@ -7,10 +7,14 @@ interface TelegramResponse {
   result?: unknown;
 }
 
+const TELEGRAM_CAPTION_MAX = 1024;
+
 export interface SendPostOptions {
   text: string;
   dryRun?: boolean;
   parseMode?: "HTML";
+  /** Фото устройства — обязательно для рубрики «Будущее в коробке» */
+  photoUrl?: string;
 }
 
 export async function sendPost(
@@ -32,8 +36,13 @@ export async function sendPost(
   const isDryRun = opts.dryRun ?? config.DRY_RUN;
 
   if (isDryRun) {
-    logger.info("DRY_RUN mode — post not sent (text + link preview)");
+    logger.info(
+      opts.photoUrl
+        ? "DRY_RUN mode — photo post not sent"
+        : "DRY_RUN mode — post not sent (text + link preview)"
+    );
     console.log("\n" + "=".repeat(50));
+    if (opts.photoUrl) console.log(`[photo] ${opts.photoUrl}`);
     console.log(opts.text);
     console.log("=".repeat(50) + "\n");
     return true;
@@ -47,13 +56,27 @@ export async function sendPost(
     return false;
   }
 
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const caption =
+    opts.text.length > TELEGRAM_CAPTION_MAX
+      ? opts.text.slice(0, TELEGRAM_CAPTION_MAX - 1) + "…"
+      : opts.text;
 
-  const body: Record<string, unknown> = {
-    chat_id: channelId,
-    text: opts.text,
-    disable_web_page_preview: false,
-  };
+  const url = opts.photoUrl
+    ? `https://api.telegram.org/bot${token}/sendPhoto`
+    : `https://api.telegram.org/bot${token}/sendMessage`;
+
+  const body: Record<string, unknown> = opts.photoUrl
+    ? {
+        chat_id: channelId,
+        photo: opts.photoUrl,
+        caption,
+      }
+    : {
+        chat_id: channelId,
+        text: caption,
+        disable_web_page_preview: false,
+      };
+
   if (opts.parseMode) {
     body.parse_mode = opts.parseMode;
   }
@@ -72,11 +95,12 @@ export async function sendPost(
       logger.error("Telegram API error", {
         status: response.status,
         description: data.description,
+        method: opts.photoUrl ? "sendPhoto" : "sendMessage",
       });
       return false;
     }
 
-    logger.info("Post sent (text with link preview)");
+    logger.info(opts.photoUrl ? "Post sent with device photo" : "Post sent (text with link preview)");
     return true;
   } catch (error) {
     logger.error("Failed to send post to Telegram", error);

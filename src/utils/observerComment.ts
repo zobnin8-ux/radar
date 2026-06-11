@@ -20,28 +20,43 @@ function textOverlapRatio(a: string, b: string): number {
 }
 
 const CLICHE_PATTERNS = [
-  /это изменит мир/i,
+  /это показывает/i,
+  /показывает тенденц/i,
+  /демонстрирует/i,
+  /подчёркивает значимость/i,
+  /подчеркивает значимость/i,
+  /подчёркивает важность/i,
+  /подчеркивает важность/i,
+  /важный шаг/i,
+  /может изменить мир/i,
+  /открывает новые возможности/i,
   /открывает новые горизонты/i,
+  /свидетельствует о/i,
+  /данная новость/i,
+  /это изменит мир/i,
   /революционн/i,
   /важный шаг в (развитие|будущее)/i,
   /переломный момент/i,
-  /подчёркивает значимость/i,
-  /подчеркивает значимость/i,
   /демонстрирует лидерство/i,
   /важный шаг в развитии технологий/i,
-  /данная новость/i,
   /в ближайшем будущем/i,
+  /может свидетельствовать/i,
+  /является важным/i,
+  /представляет интерес/i,
+  /в контексте развития/i,
 ];
 
-const MIN_WORDS = 5;
-const MAX_WORDS = 45;
-const WHY_OVERLAP_THRESHOLD = 0.42;
-const REASON_OVERLAP_THRESHOLD = 0.48;
+/** Наблюдатель 2.0: цель 40–80 слов; короткие живые мысли тоже допустимы */
+export const OBSERVER_MIN_WORDS = 12;
+export const OBSERVER_MAX_WORDS = 90;
+
+const WHY_OVERLAP_THRESHOLD = 0.38;
+const WHAT_OVERLAP_THRESHOLD = 0.38;
 
 export function shouldIncludeObserver(
   comment: string | null | undefined,
   whyImportant: string,
-  reason: string
+  whatHappened = ""
 ): comment is string {
   if (!comment) return false;
 
@@ -49,14 +64,20 @@ export function shouldIncludeObserver(
   if (!trimmed) return false;
 
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length < MIN_WORDS || words.length > MAX_WORDS) return false;
+  if (words.length < OBSERVER_MIN_WORDS || words.length > OBSERVER_MAX_WORDS) {
+    return false;
+  }
 
   for (const pattern of CLICHE_PATTERNS) {
     if (pattern.test(trimmed)) return false;
   }
 
-  if (textOverlapRatio(trimmed, whyImportant) >= WHY_OVERLAP_THRESHOLD) return false;
-  if (textOverlapRatio(trimmed, reason) >= REASON_OVERLAP_THRESHOLD) return false;
+  if (whyImportant && textOverlapRatio(trimmed, whyImportant) >= WHY_OVERLAP_THRESHOLD) {
+    return false;
+  }
+  if (whatHappened && textOverlapRatio(trimmed, whatHappened) >= WHAT_OVERLAP_THRESHOLD) {
+    return false;
+  }
 
   return true;
 }

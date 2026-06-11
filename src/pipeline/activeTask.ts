@@ -1,4 +1,4 @@
-type TaskName = "pipeline" | "injection";
+type TaskName = "pipeline" | "injection" | "publish";
 
 let active: TaskName | null = null;
 
@@ -18,6 +18,10 @@ export function isPipelineRunning(): boolean {
 
 export function isInjectionRunning(): boolean {
   return active === "injection";
+}
+
+export function isPublishRunning(): boolean {
+  return active === "publish";
 }
 
 export function isAnyTaskRunning(): boolean {

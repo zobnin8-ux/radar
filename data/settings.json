@@ -1,10 +1,12 @@
 {
-  "maxPostsPerDay": 15,
+  "maxPostsPerDay": 18,
   "maxPostsPerRun": 3,
   "categoryQuotaMax": 4,
   "horizonMixPercent": 30,
   "minAiPostsPerDay": 1,
   "postIntervalCron": "0 */6 * * *",
+  "publishEvenSpread": true,
+  "publishIntervalCron": "0 * * * *",
   "dryRun": false,
   "paused": false,
   "rssSources": [
@@ -230,6 +232,56 @@
       "tier": 2,
       "trustScore": 0.8,
       "group": "energy",
+      "enabled": true
+    },
+    {
+      "name": "N+1",
+      "url": "https://nplus1.ru/rss",
+      "tier": 2,
+      "trustScore": 0.85,
+      "group": "science",
+      "region": "ru",
+      "language": "ru",
+      "enabled": true
+    },
+    {
+      "name": "3DNews",
+      "url": "https://3dnews.ru/news/rss/",
+      "tier": 2,
+      "trustScore": 0.75,
+      "group": "engineering",
+      "region": "ru",
+      "language": "ru",
+      "enabled": true
+    },
+    {
+      "name": "Naked Science",
+      "url": "https://naked-science.ru/article/category/hi-tech/feed",
+      "tier": 2,
+      "trustScore": 0.75,
+      "group": "science",
+      "region": "ru",
+      "language": "ru",
+      "feedUrls": [
+        "https://naked-science.ru/article/category/sci/feed"
+      ],
+      "excludeUrlPatterns": [
+        "/article/tech/",
+        "/article/category/tech/"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "Хайтек",
+      "url": "https://hightech.fm/feed",
+      "tier": 2,
+      "trustScore": 0.6,
+      "group": "science",
+      "region": "ru",
+      "language": "ru",
+      "feedUrls": [
+        "https://hightech.fm/rubrics/tehnologii/feed"
+      ],
       "enabled": true
     }
   ]

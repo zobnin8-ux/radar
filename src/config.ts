@@ -9,9 +9,10 @@ const envSchema = z.object({
   MAX_POSTS_PER_DAY: z.coerce.number().int().positive().default(10),
   MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(3),
   POST_INTERVAL_CRON: z.string().default("0 * * * *"),
+  PUBLISH_INTERVAL_CRON: z.string().default("*/30 * * * *"),
   WEEKLY_TRENDS_CRON: z.string().default("0 11 * * 0"),
   WEEKLY_GITTREND_CRON: z.string().default("30 11 * * 0"),
-  WEEKLY_IN_THE_BOX_CRON: z.string().default("0 10 * * 6"),
+  WEEKLY_IN_THE_BOX_CRON: z.string().default("0 10 * * 3,6"),
   GITTREND_RADAR_URL: z
     .string()
     .url()
@@ -28,6 +29,15 @@ const envSchema = z.object({
   DASHBOARD_PORT: z.coerce.number().int().positive().default(3847),
   DASHBOARD_HOST: z.string().default("0.0.0.0"),
   DASHBOARD_PASSWORD: z.string().min(1).default("radar"),
+  MAX_PUBLICATION_QUEUE_SIZE: z.coerce.number().int().positive().default(50),
+  SIGNAL_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  IMPACT_TTL_DAYS: z.coerce.number().int().positive().default(10),
+  BREAKTHROUGH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  FAILURE_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  MIN_SCORE_SIGNAL: z.coerce.number().int().min(1).max(10).default(7),
+  MIN_SCORE_IMPACT: z.coerce.number().int().min(1).max(10).default(7),
+  MIN_SCORE_BREAKTHROUGH: z.coerce.number().int().min(1).max(10).default(7),
+  MIN_SCORE_FAILURE: z.coerce.number().int().min(1).max(10).default(8),
 });
 
 const parsed = envSchema.safeParse(process.env);

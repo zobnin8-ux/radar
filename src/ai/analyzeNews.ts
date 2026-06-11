@@ -225,7 +225,6 @@ Return JSON with this exact shape:
         "category": "ai",
         "impactHorizon": "1-3 years",
         "reason": "brief editor note in the item's source language",
-        "observerComment": "короткое наблюдение или null",
         "technology": "краткая метка технологии, 2-6 слов"
       }
     }
@@ -233,22 +232,12 @@ Return JSON with this exact shape:
 }
 
 LANGUAGE (per candidate tag language=…):
-- language=ru: reason, technology, observerComment — всё на русском. Не переводить заголовок и описание.
-- language=en: reason in English; technology and observerComment in Russian.
+- language=ru: reason и technology — на русском. Не переводить заголовок и описание.
+- language=en: reason in English; technology in Russian.
 
 Also add field technology — short label of the core technology (2-6 words), not the product name.
 
-Also add field observerComment — an optional short comment from a live observer.
-
-Do not retell the news. Do not repeat reason.
-
-Find one human, market, historical, or technology angle.
-
-If there is nothing interesting to add — return null.
-
-Observer comment must sound natural, without pathos or clichés.
-
-Maximum 35–45 words.
+(Блок «Наблюдение» генерируется отдельно при публикации — здесь не нужен.)
 
 Use exact enum values only:
 - level: observation | signal | impact | breakthrough | failure

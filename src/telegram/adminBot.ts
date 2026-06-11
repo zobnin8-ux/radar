@@ -18,14 +18,17 @@ import { loadSettings, updateSettings } from "../storage/settingsStore.js";
 import { loadState } from "../storage/stateStore.js";
 import { buildRuSourcesReport, formatRuSourcesReport } from "../rss/ruSourcesReport.js";
 import { buildDashboardPlainMessage } from "../utils/dashboardUrls.js";
+import { buildQueuePruneReport, buildQueueStatusMessage } from "../utils/queueReport.js";
+import { buildSourceStatsMessage } from "../utils/sourceStats.js";
+import { backfillObserverComments } from "../ai/backfillObserver.js";
+import { cronToLabel } from "../utils/schedule.js";
+import { postsDueByNow } from "../utils/evenPublish.js";
 import { isSameCalendarDay } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
 import { sleep } from "../utils/sleep.js";
 import { getUpdates, sendTelegramMessage } from "./botApi.js";
 
-const HELP_TEXT = `📡 Радар будущего
-
-Управление — пишите сюда, в личку бота:
+const HELP_TEXT = `📡 Радар будущего — команды
 
 /status — как дела
 /run — опубликовать сейчас
@@ -38,7 +41,13 @@ const HELP_TEXT = `📡 Радар будущего
 /panel — адрес панели
 /trends — направление недели (RSS)
 /github — GitHub-тренды (GitTrend)
-/box — будущее в коробке (гаджеты)`;
+/box — будущее в коробке (гаджеты, в канал)
+/queue — очередь публикаций
+/queue-prune — очередь: очистка
+/source-stats — статистика источников
+/observer-queue — наблюдатель для очереди
+
+/help или /commands — показать этот список`;
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -63,14 +72,22 @@ async function buildStatusText(): Promise<string> {
     : "ещё не было";
 
   const mode = settings.dryRun ? "тестовый" : "боевой";
-  return [
+  const due = postsDueByNow(settings.maxPostsPerDay);
+  const spreadLine = settings.publishEvenSpread
+    ? `График: ${postsToday}/${settings.maxPostsPerDay} (слот ${due}), тик ${cronToLabel(settings.publishIntervalCron)}`
+    : null;
+
+  const lines = [
     status,
     ``,
     `Постов сегодня: ${postsToday}/${settings.maxPostsPerDay}${injectionsToday > 0 ? ` (+${injectionsToday} инъекция)` : ""}`,
-    `За запуск: до ${settings.maxPostsPerRun}`,
+    `За тик: до ${settings.maxPostsPerRun}`,
+    ...(spreadLine ? [spreadLine] : []),
+    `RSS: ${cronToLabel(settings.postIntervalCron)}`,
     `Режим: ${mode}`,
     `Последний раз: ${lastRun}`,
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }
 
 async function buildTodayText(): Promise<string> {
@@ -122,6 +139,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
 
   switch (cmd) {
     case "/help":
+    case "/commands":
       await sendTelegramMessage(chatId, HELP_TEXT);
       break;
 
@@ -179,7 +197,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
         return;
       }
       await sendTelegramMessage(chatId, "📦 Формирую рубрику «Будущее в коробке»...");
-      const result = await runWeeklyInTheBox();
+      const result = await runWeeklyInTheBox({ trigger: "manual" });
       await sendTelegramMessage(chatId, result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
       break;
     }
@@ -268,8 +286,46 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
     }
 
+    case "/queue":
+      await sendTelegramMessage(chatId, await buildQueueStatusMessage());
+      break;
+
+    case "/queue-prune":
+      await sendTelegramMessage(chatId, await buildQueuePruneReport());
+      break;
+
+    case "/source-stats":
+      await sendTelegramMessage(chatId, await buildSourceStatsMessage());
+      break;
+
+    case "/observer-queue": {
+      const force = parts[1] === "force";
+      await sendTelegramMessage(
+        chatId,
+        force
+          ? "📡 Наблюдатель 2.0: перегенерирую всю очередь (gpt-4o)…"
+          : "📡 Наблюдатель 2.0: обрабатываю очередь без комментариев…"
+      );
+      const result = await backfillObserverComments({ force });
+      await sendTelegramMessage(
+        chatId,
+        [
+          "✅ Наблюдатель — очередь",
+          "",
+          `В очереди: ${result.candidates}`,
+          `Сохранено: ${result.saved}`,
+          `Без мысли (null): ${result.aiNull}`,
+          `Ошибок: ${result.errors}`,
+          "",
+          "При публикации готовые комментарии подставятся автоматически.",
+          "Повторить всё: /observer-queue force",
+        ].join("\n")
+      );
+      break;
+    }
+
     default:
-      await sendTelegramMessage(chatId, "Неизвестная команда. /help");
+      await sendTelegramMessage(chatId, "Неизвестная команда. Список: /help или /commands");
   }
 }
 
@@ -309,23 +365,20 @@ export async function sendDashboardLinksToAdmin(): Promise<boolean> {
     return false;
   }
 
-  const message = [
-    "✅ Бот запущен!",
-    "",
-    buildDashboardPlainMessage(),
-  ].join("\n");
+  const startupMessage = ["✅ Бот запущен!", "", buildDashboardPlainMessage()].join("\n");
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const sent = await sendTelegramMessage(chatId, message);
-    if (sent) {
-      logger.info(`Dashboard links sent to Telegram (chat ${chatId})`);
+    const sentStartup = await sendTelegramMessage(chatId, startupMessage);
+    const sentHelp = sentStartup ? await sendTelegramMessage(chatId, HELP_TEXT) : false;
+    if (sentStartup && sentHelp) {
+      logger.info(`Startup + commands sent to Telegram (chat ${chatId})`);
       return true;
     }
-    logger.warn(`Failed to send panel link, attempt ${attempt}/3`);
+    logger.warn(`Failed to send startup messages, attempt ${attempt}/3`);
     await sleep(2000);
   }
 
-  logger.error("Could not send panel link to Telegram after 3 attempts");
+  logger.error("Could not send startup messages to Telegram after 3 attempts");
   return false;
 }
 

@@ -14,7 +14,10 @@ function getToken(): string | undefined {
 export async function sendTelegramMessage(
   chatId: number | string,
   text: string,
-  options?: { html?: boolean }
+  options?: {
+    html?: boolean;
+    replyMarkup?: { inline_keyboard: Array<Array<Record<string, string>>> };
+  }
 ): Promise<boolean> {
   const token = getToken();
   if (!token) return false;
@@ -28,6 +31,9 @@ export async function sendTelegramMessage(
   };
   if (options?.html) {
     body.parse_mode = "HTML";
+  }
+  if (options?.replyMarkup) {
+    body.reply_markup = options.replyMarkup;
   }
 
   try {

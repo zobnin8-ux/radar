@@ -1,66 +1,11 @@
-import OpenAI from "openai";
-import { z } from "zod";
-import { config } from "../config.js";
-import { getPublishQueue, saveNewsRecord } from "../storage/newsStore.js";
+import { generateObserverComment } from "./generateObserverComment.js";
+import { generatePostParts } from "./generateTelegramPost.js";
+import { getPublishQueue, recordToAnalyzed, saveNewsRecord } from "../storage/newsStore.js";
 import type { NewsRecord } from "../types.js";
-import { shouldIncludeObserver } from "../utils/observerComment.js";
 import { logger } from "../utils/logger.js";
 import { sleep } from "../utils/sleep.js";
 
-const openai = new OpenAI({
-  apiKey: config.OPENAI_API_KEY,
-  timeout: 90_000,
-});
-
-const BATCH_SIZE = 10;
-const BATCH_DELAY_MS = 1500;
-
-const responseSchema = z.object({
-  comments: z.array(
-    z.object({
-      index: z.number().int().nonnegative(),
-      observerComment: z.union([z.string(), z.null()]),
-    })
-  ),
-});
-
-const SYSTEM_PROMPT = `You are a live observer for the Russian Telegram channel "Радар будущего".
-
-For each queued news item, write an optional observerComment — a short human angle in Russian.
-
-Rules:
-- Do not retell the headline or the editor's reason.
-- Find one human, market, historical, or technology angle.
-- Natural Russian, no pathos, no clichés ("это изменит мир", "революционный", etc.).
-- 5–45 words. If nothing interesting to add — return null.
-- Do not change levels, scores, or categories — only observerComment.
-
-Return JSON:
-{
-  "comments": [
-    { "index": 0, "observerComment": "текст или null" }
-  ]
-}`;
-
-function formatBatch(records: NewsRecord[]): string {
-  return records
-    .map(
-      (r, i) =>
-        `[${i}] ${r.title}
-Source: ${r.source}
-Level: ${r.level} | Category: ${r.category} | Score: ${r.score}
-Editor reason: ${r.reason}`
-    )
-    .join("\n\n");
-}
-
-function normalizeComment(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === "null") return null;
-  return trimmed;
-}
+const ITEM_DELAY_MS = 2000;
 
 export interface BackfillObserverResult {
   candidates: number;
@@ -68,73 +13,59 @@ export interface BackfillObserverResult {
   saved: number;
   aiNull: number;
   filteredOut: number;
+  errors: number;
   dryRun: boolean;
 }
 
-async function processBatch(
-  batch: NewsRecord[],
+async function processQueueItem(
+  record: NewsRecord,
   dryRun: boolean
-): Promise<{ saved: number; aiNull: number; filteredOut: number }> {
-  logger.info(`Observer backfill: batch of ${batch.length}...`);
+): Promise<"saved" | "null" | "error"> {
+  const analyzed = recordToAnalyzed(record);
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.35,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Add observerComment for these ${batch.length} queued items:\n\n${formatBatch(batch)}`,
-      },
-    ],
-  });
+  try {
+    const parts = await generatePostParts(analyzed);
+    const comment = await generateObserverComment({
+      title: record.title,
+      source: record.source,
+      whatHappened: parts.whatHappened,
+      whyImportant: parts.whyImportant,
+      level: record.level,
+      technology: record.technology,
+    });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error("OpenAI returned empty observer backfill response");
-  }
-
-  const parsed = responseSchema.parse(JSON.parse(content));
-  let saved = 0;
-  let aiNull = 0;
-  let filteredOut = 0;
-
-  for (const entry of parsed.comments) {
-    const record = batch[entry.index];
-    if (!record) continue;
-
-    const comment = normalizeComment(entry.observerComment);
     if (!comment) {
-      aiNull++;
-      continue;
-    }
-
-    if (!shouldIncludeObserver(comment, "", record.reason)) {
-      filteredOut++;
-      logger.debug(`Filtered observer for "${record.title}"`);
-      continue;
+      if (!dryRun) {
+        await saveNewsRecord({ ...record, observerComment: null });
+      }
+      return "null";
     }
 
     if (!dryRun) {
       await saveNewsRecord({ ...record, observerComment: comment });
     }
-    saved++;
-    logger.info(`Observer backfill: ${dryRun ? "[dry] " : ""}${record.title.slice(0, 60)}…`);
+    logger.info(`Observer queue: ${dryRun ? "[dry] " : ""}${record.title.slice(0, 60)}…`);
+    return "saved";
+  } catch (error) {
+    logger.error(`Observer queue failed for "${record.title}"`, error);
+    return "error";
   }
-
-  return { saved, aiNull, filteredOut };
 }
 
 export async function backfillObserverComments(options?: {
   dryRun?: boolean;
+  /** Перегенерировать все, не только без комментария */
+  force?: boolean;
 }): Promise<BackfillObserverResult> {
   const dryRun = options?.dryRun ?? false;
+  const force = options?.force ?? false;
   const queue = await getPublishQueue();
-  const candidates = queue.filter((r) => !r.observerComment?.trim());
+  const candidates = force
+    ? queue
+    : queue.filter((r) => !r.observerComment?.trim());
 
   logger.info(
-    `Observer backfill: ${candidates.length} queue item(s) without comment (dryRun=${dryRun})`
+    `Observer queue: ${candidates.length} item(s) (force=${force}, dryRun=${dryRun})`
   );
 
   if (candidates.length === 0) {
@@ -144,27 +75,26 @@ export async function backfillObserverComments(options?: {
       saved: 0,
       aiNull: 0,
       filteredOut: 0,
+      errors: 0,
       dryRun,
     };
   }
 
   let saved = 0;
   let aiNull = 0;
-  let filteredOut = 0;
+  let errors = 0;
 
-  for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
-    const batch = candidates.slice(offset, offset + BATCH_SIZE);
-    const batchNum = Math.floor(offset / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(candidates.length / BATCH_SIZE);
-    logger.info(`Observer backfill batch ${batchNum}/${totalBatches}`);
+  for (let i = 0; i < candidates.length; i++) {
+    const record = candidates[i];
+    logger.info(`Observer queue ${i + 1}/${candidates.length}…`);
 
-    const result = await processBatch(batch, dryRun);
-    saved += result.saved;
-    aiNull += result.aiNull;
-    filteredOut += result.filteredOut;
+    const result = await processQueueItem(record, dryRun);
+    if (result === "saved") saved++;
+    else if (result === "null") aiNull++;
+    else errors++;
 
-    if (offset + BATCH_SIZE < candidates.length) {
-      await sleep(BATCH_DELAY_MS);
+    if (i + 1 < candidates.length) {
+      await sleep(ITEM_DELAY_MS);
     }
   }
 
@@ -173,12 +103,13 @@ export async function backfillObserverComments(options?: {
     processed: candidates.length,
     saved,
     aiNull,
-    filteredOut,
+    filteredOut: 0,
+    errors,
     dryRun,
   };
 
   logger.info(
-    `Observer backfill done: saved=${saved}, aiNull=${aiNull}, filtered=${filteredOut}, dryRun=${dryRun}`
+    `Observer queue done: saved=${saved}, null=${aiNull}, errors=${errors}, dryRun=${dryRun}`
   );
 
   return summary;
