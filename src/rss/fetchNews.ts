@@ -101,12 +101,40 @@ function shouldExcludeUrl(url: string, patterns: string[] | undefined): boolean 
   return patterns.some((pattern) => lower.includes(pattern.toLowerCase()));
 }
 
+function shouldIncludeUrl(url: string, patterns: string[] | undefined): boolean {
+  if (!patterns?.length) return true;
+  const lower = url.toLowerCase();
+  return patterns.some((pattern) => lower.includes(pattern.toLowerCase()));
+}
+
+function getItemCategories(item: Parser.Item): string[] {
+  return item.categories ?? [];
+}
+
+function passesRssCategoryFilter(item: Parser.Item, source: RssSourceConfig): boolean {
+  const cats = getItemCategories(item);
+
+  if (source.excludeRssCategories?.length) {
+    if (cats.some((c) => source.excludeRssCategories!.includes(c))) {
+      return false;
+    }
+  }
+
+  if (source.includeRssCategories?.length) {
+    if (!cats.some((c) => source.includeRssCategories!.includes(c))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 async function fetchFromFeedUrl(
   source: RssSourceConfig,
   feedUrl: string,
   parser: Parser
 ): Promise<NewsItem[]> {
-  const { name: sourceName, tier, trustScore } = source;
+  const { name: sourceName, tier, trustScore, boxPriority } = source;
   const feed = await parser.parseURL(feedUrl);
   const items: NewsItem[] = [];
 
@@ -116,6 +144,8 @@ async function fetchFromFeedUrl(
     const title = item.title?.trim();
 
     if (!link || !title || !publishedAt) continue;
+    if (!passesRssCategoryFilter(item, source)) continue;
+    if (!shouldIncludeUrl(link, source.includeUrlPatterns)) continue;
     if (shouldExcludeUrl(link, source.excludeUrlPatterns)) continue;
 
     const description = item.contentSnippet
@@ -134,6 +164,7 @@ async function fetchFromFeedUrl(
       trustScore,
       language: source.language,
       imageUrl: extractImageUrl(item),
+      boxPriority,
     });
   }
 

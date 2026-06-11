@@ -153,8 +153,14 @@ Example NOT a device:
   "reason": "tech news but not gadget"
 }
 
-deviceName and technologyInside in Russian when boxCandidate true.
-interestingForRadar: true ONLY for non-device tech news — NEVER for device without image.
+deviceName and deviceType should be filled when boxCandidate true.
+whyThisIsADevice is optional editorial note (never required for acceptance).
+Prefer boxCandidate true for real physical gadgets even when metadata fields are partial.
+If you cannot confidently identify any physical device — boxCandidate false.
+
+NEVER publish: partnerships, ad platforms, SaaS, API, cloud, corporate deals, investments,
+software updates without new hardware, research/patents/concepts without a product,
+buying guides, deals, listicles.
 
 Return JSON: { "analyses": [ ... ] }`;
 
@@ -191,63 +197,66 @@ function evaluateImageFromMetadata(
   }
 
   if (data.hasDeviceImage === false) {
-    return {
-      hasDeviceImage: false,
-      rejectReason: data.rejectReason?.trim() || "No actual device image found",
-    };
-  }
-
-  if (data.hasDeviceImage !== true) {
-    return {
-      hasDeviceImage: false,
-      rejectReason: "Device image not confirmed",
-    };
+    const reason = data.rejectReason?.trim();
+    if (reason) {
+      return { hasDeviceImage: false, rejectReason: reason };
+    }
   }
 
   return { hasDeviceImage: true, rejectReason: null };
 }
 
+function normalizeDeviceFields(
+  data: z.infer<typeof gadgetAnalysisSchema>,
+  news: NewsItem
+): z.infer<typeof gadgetAnalysisSchema> {
+  return {
+    ...data,
+    deviceName: data.deviceName?.trim() || news.title.trim(),
+    deviceType: data.deviceType?.trim() || "гаджет",
+    technologyInside: data.technologyInside?.trim() || data.deviceType?.trim() || "физическое устройство",
+    score: data.score ?? MIN_PUBLISH_SCORE,
+  };
+}
+
 function passesBoxGate(
   data: z.infer<typeof gadgetAnalysisSchema>,
   news: NewsItem
-): { ok: boolean; rejectReason: string | null; hasDeviceImage: boolean } {
-  if (!data.boxCandidate || !data.isPhysicalDevice || !data.canBePutInABox) {
+): { ok: boolean; rejectReason: string | null; hasDeviceImage: boolean; normalized: z.infer<typeof gadgetAnalysisSchema> } {
+  if (!data.boxCandidate) {
     return {
       ok: false,
       hasDeviceImage: false,
+      normalized: data,
       rejectReason:
         data.rejectReason?.trim() ||
         "Not a physical device suitable for «Будущее в коробке»",
     };
   }
 
-  if (!data.deviceName?.trim() || !data.technologyInside?.trim()) {
-    return {
-      ok: false,
-      hasDeviceImage: false,
-      rejectReason: "Missing device name or technology inside",
-    };
-  }
+  const normalized = normalizeDeviceFields(data, news);
 
-  const score = data.score ?? 0;
+  const score = normalized.score ?? MIN_PUBLISH_SCORE;
   if (score < MIN_PUBLISH_SCORE) {
     return {
       ok: false,
       hasDeviceImage: false,
+      normalized,
       rejectReason: `Score too low (${score})`,
     };
   }
 
-  const imageCheck = evaluateImageFromMetadata(data, news);
+  const imageCheck = evaluateImageFromMetadata(normalized, news);
   if (!imageCheck.hasDeviceImage) {
     return {
       ok: false,
       hasDeviceImage: false,
+      normalized,
       rejectReason: imageCheck.rejectReason,
     };
   }
 
-  return { ok: true, rejectReason: null, hasDeviceImage: true };
+  return { ok: true, rejectReason: null, hasDeviceImage: true, normalized };
 }
 
 function toAnalysis(
@@ -301,7 +310,7 @@ function parseResponse(content: string, batch: NewsItem[]): GadgetEvaluation[] {
     const gate = passesBoxGate(data, news);
     const accepted = gate.ok;
     const analysis = toAnalysis(
-      data,
+      gate.normalized,
       news,
       accepted,
       accepted ? null : gate.rejectReason,
@@ -354,6 +363,9 @@ export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzeGad
     .filter((e) => e.accepted)
     .map((e) => ({ news: e.news, analysis: e.analysis }))
     .sort((a, b) => {
+      const prioA = a.news.boxPriority ?? 99;
+      const prioB = b.news.boxPriority ?? 99;
+      if (prioA !== prioB) return prioA - prioB;
       const trustDiff = (b.news.trustScore ?? 0.75) - (a.news.trustScore ?? 0.75);
       if (trustDiff !== 0) return trustDiff;
       return b.analysis.score - a.analysis.score;

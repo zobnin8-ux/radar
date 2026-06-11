@@ -4,8 +4,27 @@ import type { ImpactHorizon } from "../types.js";
 
 const DATA_PATH = join(process.cwd(), "data", "in-the-box.json");
 const REJECTIONS_PATH = join(process.cwd(), "data", "in-the-box-rejections.json");
+const STATS_PATH = join(process.cwd(), "data", "in-the-box-stats.json");
 
 export type InTheBoxTrigger = "cron" | "manual";
+
+export interface InTheBoxRunStats {
+  at: string;
+  trigger: InTheBoxTrigger;
+  totalCandidates: number;
+  rejectedDuplicate: number;
+  rejectedPrefilter: number;
+  rejectedAi: number;
+  rejectedNoImage: number;
+  rejectedVision: number;
+  boxDevicesFound: number;
+  accepted: number;
+  published: number;
+  publishedDeviceName?: string | null;
+  reserveAdded?: number;
+  reserveUsed?: boolean;
+  message?: string;
+}
 export type InTheBoxScheduledSlot = "wednesday" | "saturday";
 
 export interface InTheBoxRecord {
@@ -24,6 +43,7 @@ export interface InTheBoxRecord {
   imageUrl: string | null;
   trigger?: InTheBoxTrigger;
   scheduledSlot?: InTheBoxScheduledSlot | null;
+  fromReserve?: boolean;
 }
 
 export interface InTheBoxRejection {
@@ -45,6 +65,7 @@ export interface InTheBoxRejection {
 
 let cache: InTheBoxRecord[] | null = null;
 let rejectionsCache: InTheBoxRejection[] | null = null;
+let statsCache: InTheBoxRunStats[] | null = null;
 
 async function ensureFile(path: string): Promise<void> {
   try {
@@ -142,4 +163,25 @@ export async function isKnownInTheBoxUrl(url: string): Promise<boolean> {
   const records = await loadInTheBoxHistory();
   const normalized = url.trim().toLowerCase();
   return records.some((r) => r.url.trim().toLowerCase() === normalized);
+}
+
+export async function loadInTheBoxRunStats(): Promise<InTheBoxRunStats[]> {
+  if (statsCache) return statsCache;
+  await ensureFile(STATS_PATH);
+  const raw = await readFile(STATS_PATH, "utf-8");
+  statsCache = JSON.parse(raw) as InTheBoxRunStats[];
+  return statsCache;
+}
+
+export async function saveInTheBoxRunStats(stats: InTheBoxRunStats): Promise<void> {
+  const records = await loadInTheBoxRunStats();
+  records.push(stats);
+  const trimmed = records.slice(-100);
+  await writeFile(STATS_PATH, JSON.stringify(trimmed, null, 2) + "\n", "utf-8");
+  statsCache = trimmed;
+}
+
+export async function getRecentInTheBoxRunStats(limit = 10): Promise<InTheBoxRunStats[]> {
+  const records = await loadInTheBoxRunStats();
+  return records.slice(-limit);
 }

@@ -9,6 +9,7 @@ import {
   type DeviceImageSource,
   type DeviceImageType,
 } from "../utils/deviceImage.js";
+import { enrichNewsWithArticleImage } from "../utils/articleImage.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -37,6 +38,7 @@ export interface DeviceImageVerification {
   imageType: DeviceImageType | null;
   imageSource: DeviceImageSource | null;
   rejectReason: string | null;
+  resolvedImageUrl?: string;
 }
 
 const SYSTEM_PROMPT = `You verify whether a feed/hero image shows an ACTUAL PHYSICAL DEVICE for the rubric "Будущее в коробке".
@@ -82,15 +84,20 @@ export async function verifyDeviceImage(
     rejectReason,
   });
 
-  if (!hasFeedImage(news)) {
-    return fail("No device image available");
+  let item = news;
+  if (!hasFeedImage(item)) {
+    item = await enrichNewsWithArticleImage(item);
   }
 
-  if (isLikelyNonDeviceImageUrl(news.imageUrl)) {
+  if (!hasFeedImage(item)) {
+    return fail("No device image available after RSS and page fetch");
+  }
+
+  if (isLikelyNonDeviceImageUrl(item.imageUrl)) {
     return fail("Feed image URL looks like logo/banner, not device");
   }
 
-  const accessible = await verifyImageUrlAccessible(news.imageUrl!);
+  const accessible = await verifyImageUrlAccessible(item.imageUrl!);
   if (!accessible) {
     return fail("Device image URL is not accessible");
   }
@@ -107,16 +114,16 @@ export async function verifyDeviceImage(
           content: [
             {
               type: "text",
-              text: `Device: ${deviceName ?? news.title}
-Source: ${news.source}
-Article title: ${news.title}
-Image URL: ${news.imageUrl}
+              text: `Device: ${deviceName ?? item.title}
+Source: ${item.source}
+Article title: ${item.title}
+Image URL: ${item.imageUrl}
 
 Does this image show the actual physical device?`,
             },
             {
               type: "image_url",
-              image_url: { url: news.imageUrl!, detail: "low" },
+              image_url: { url: item.imageUrl!, detail: "low" },
             },
           ],
         },
@@ -143,6 +150,7 @@ Does this image show the actual physical device?`,
       imageType: data.imageType ?? "unknown",
       imageSource: data.imageSource ?? "unknown",
       rejectReason: null,
+      resolvedImageUrl: item.imageUrl,
     };
   } catch (error) {
     logger.error("Device image vision check failed", error);

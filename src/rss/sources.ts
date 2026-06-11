@@ -13,6 +13,14 @@ export interface RssSource {
   feedUrls?: string[];
   /** Отбрасывать элементы, если URL содержит любой из фрагментов (без учёта регистра). */
   excludeUrlPatterns?: string[];
+  /** Принимать только URL, содержащие один из фрагментов (если задано). */
+  includeUrlPatterns?: string[];
+  /** RSS-категории: хотя бы одна должна совпасть (если задано). */
+  includeRssCategories?: string[];
+  /** RSS-категории: при совпадении — отбросить. */
+  excludeRssCategories?: string[];
+  /** Приоритет в рубрике «Будущее в коробке» (1 = выше). */
+  boxPriority?: number;
 }
 
 export interface RssSourceConfig extends RssSource {

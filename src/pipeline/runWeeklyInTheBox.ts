@@ -1,5 +1,9 @@
 import { analyzeGadgets, type AnalyzedGadget } from "../ai/analyzeGadget.js";
-import { generateInTheBoxPost } from "../ai/generateInTheBoxPost.js";
+import {
+  describeInTheBoxPostFailure,
+  generateInTheBoxPost,
+  type InTheBoxPostResult,
+} from "../ai/generateInTheBoxPost.js";
 import { verifyDeviceImage, type DeviceImageVerification } from "../ai/verifyDeviceImage.js";
 import { fetchAllNews } from "../rss/fetchNews.js";
 import { getInTheBoxSourceConfigs } from "../rss/inTheBoxSources.js";
@@ -8,16 +12,27 @@ import {
   isKnownInTheBoxUrl,
   saveInTheBoxRecord,
   saveInTheBoxRejections,
+  saveInTheBoxRunStats,
   wasScheduledSlotFilledThisWeek,
   type InTheBoxRejection,
+  type InTheBoxRunStats,
   type InTheBoxTrigger,
 } from "../storage/inTheBoxStore.js";
+import {
+  addToInTheBoxReserve,
+  getAvailableInTheBoxReserve,
+  removeFromInTheBoxReserve,
+  type ReserveCandidateInput,
+} from "../storage/inTheBoxReserveStore.js";
 import { addPublished, isAlreadyPublished } from "../storage/publishedStore.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import { recordLastRun } from "../storage/stateStore.js";
 import { sendPost } from "../telegram/sendPost.js";
 import { filterByContentPolicy } from "../filters/contentPolicy.js";
+import { enrichNewsBatch } from "../utils/articleImage.js";
+import { formatBoxFailureMessage, isImageRelatedRejectReason } from "../utils/boxRunReport.js";
 import { dedupeNews } from "../utils/dedupe.js";
+import { verifyImageUrlAccessible } from "../utils/deviceImage.js";
 import { prefilterGadgetNews } from "../utils/gadgetPrefilter.js";
 import { logger } from "../utils/logger.js";
 import { routeInterestingGadgetRejections } from "./routeGadgetToRadar.js";
@@ -33,50 +48,365 @@ export interface RunInTheBoxOptions {
   trigger?: InTheBoxTrigger;
 }
 
+interface PreparedGadget {
+  gadget: AnalyzedGadget;
+  post: InTheBoxPostResult;
+  imageVerification: DeviceImageVerification;
+}
+
 let inTheBoxRunning = false;
 
 export function isInTheBoxRunning(): boolean {
   return inTheBoxRunning;
 }
 
-async function pickPublishableWithVerifiedImage(
-  accepted: AnalyzedGadget[],
+function emptyStats(trigger: InTheBoxTrigger): InTheBoxRunStats {
+  return {
+    at: new Date().toISOString(),
+    trigger,
+    totalCandidates: 0,
+    rejectedDuplicate: 0,
+    rejectedPrefilter: 0,
+    rejectedAi: 0,
+    rejectedNoImage: 0,
+    rejectedVision: 0,
+    boxDevicesFound: 0,
+    accepted: 0,
+    published: 0,
+    reserveAdded: 0,
+    reserveUsed: false,
+  };
+}
+
+async function persistStats(stats: InTheBoxRunStats, dryRun: boolean): Promise<void> {
+  if (dryRun) return;
+  await saveInTheBoxRunStats(stats);
+}
+
+function withResolvedImage(
+  gadget: AnalyzedGadget,
+  imageVerification: DeviceImageVerification
+): AnalyzedGadget {
+  const news =
+    imageVerification.resolvedImageUrl &&
+    imageVerification.resolvedImageUrl !== gadget.news.imageUrl
+      ? { ...gadget.news, imageUrl: imageVerification.resolvedImageUrl }
+      : gadget.news;
+  return { ...gadget, news };
+}
+
+function recordVisionRejection(
+  gadget: AnalyzedGadget,
   evaluatedAt: string,
-  rejectionEntries: InTheBoxRejection[]
-): Promise<{ gadget: AnalyzedGadget; imageVerification: DeviceImageVerification } | null> {
-  for (const gadget of accepted) {
-    const imageVerification = await verifyDeviceImage(
-      gadget.news,
-      gadget.analysis.deviceName
-    );
+  rejectionEntries: InTheBoxRejection[],
+  stats: InTheBoxRunStats,
+  rejectReason: string
+): void {
+  stats.rejectedVision += 1;
+  stats.rejectedNoImage += 1;
 
-    if (imageVerification.hasDeviceImage) {
-      return { gadget, imageVerification };
+  rejectionEntries.push({
+    evaluatedAt,
+    url: gadget.news.url,
+    title: gadget.news.title,
+    source: gadget.news.source,
+    status: "rejected",
+    boxCandidate: true,
+    isPhysicalDevice: true,
+    canBePutInABox: true,
+    hasDeviceImage: false,
+    imageType: null,
+    imageSource: null,
+    rejectReason,
+    interestingForRadar: false,
+    routedToRadar: false,
+  });
+}
+
+function tallyAiRejections(
+  evaluated: Awaited<ReturnType<typeof analyzeGadgets>>["evaluated"],
+  stats: InTheBoxRunStats
+): void {
+  stats.boxDevicesFound = evaluated.filter((e) => e.analysis.boxCandidate).length;
+
+  for (const e of evaluated.filter((x) => !x.accepted)) {
+    const reason = e.analysis.rejectReason ?? "";
+    if (isImageRelatedRejectReason(reason)) {
+      stats.rejectedNoImage += 1;
+    } else {
+      stats.rejectedAi += 1;
     }
+  }
+}
 
+function toReserveInput(prepared: PreparedGadget, trigger: InTheBoxTrigger): ReserveCandidateInput {
+  const { gadget, post, imageVerification } = prepared;
+  return {
+    url: gadget.news.url,
+    title: gadget.news.title,
+    source: gadget.news.source,
+    newsPublishedAt: gadget.news.publishedAt.toISOString(),
+    deviceName: gadget.analysis.deviceName ?? gadget.news.title,
+    deviceType: gadget.analysis.deviceType,
+    technologyInside: gadget.analysis.technologyInside ?? "",
+    whyThisIsADevice: gadget.analysis.whyThisIsADevice,
+    score: gadget.analysis.score,
+    impactHorizon: gadget.analysis.impactHorizon,
+    headline: post.headline,
+    post: post.post,
+    imageUrl: gadget.news.imageUrl!,
+    imageType: imageVerification.imageType,
+    boxPriority: gadget.news.boxPriority ?? null,
+    savedFromTrigger: trigger,
+  };
+}
+
+async function prepareGadgetForPublish(
+  gadget: AnalyzedGadget,
+  evaluatedAt: string,
+  rejectionEntries: InTheBoxRejection[],
+  stats: InTheBoxRunStats
+): Promise<PreparedGadget | null> {
+  const imageVerification = await verifyDeviceImage(gadget.news, gadget.analysis.deviceName);
+
+  if (!imageVerification.hasDeviceImage) {
     logger.info(
       `Vision rejected image for "${gadget.news.title}": ${imageVerification.rejectReason}`
     );
-
-    rejectionEntries.push({
+    recordVisionRejection(
+      gadget,
       evaluatedAt,
+      rejectionEntries,
+      stats,
+      imageVerification.rejectReason ?? "Device image not found"
+    );
+    return null;
+  }
+
+  const candidate = withResolvedImage(gadget, imageVerification);
+
+  logger.info(
+    `Selected device: "${candidate.analysis.deviceName}" (${candidate.analysis.deviceType}, score ${candidate.analysis.score}, image ${imageVerification.imageType}) — ${candidate.news.title}`
+  );
+
+  const postOutcome = await generateInTheBoxPost(candidate);
+  if (!postOutcome.ok) {
+    const failMsg = describeInTheBoxPostFailure(postOutcome);
+    logger.warn(`Post generation failed for "${candidate.news.title}": ${failMsg}`);
+    return null;
+  }
+
+  if (!candidate.news.imageUrl) {
+    return null;
+  }
+
+  return { gadget: candidate, post: postOutcome.result, imageVerification };
+}
+
+async function saveReserveFromPrepared(
+  prepared: PreparedGadget[],
+  trigger: InTheBoxTrigger,
+  dryRun: boolean,
+  stats: InTheBoxRunStats
+): Promise<void> {
+  if (trigger !== "cron" || dryRun || prepared.length === 0) return;
+
+  const inputs = prepared.map((p) => toReserveInput(p, trigger));
+  const added = await addToInTheBoxReserve(inputs);
+  stats.reserveAdded = (stats.reserveAdded ?? 0) + added;
+  if (added > 0) {
+    logger.info(`In-the-box reserve: saved ${added} ready post(s)`);
+  }
+}
+
+async function commitPublication(
+  prepared: PreparedGadget,
+  trigger: InTheBoxTrigger,
+  dryRun: boolean,
+  fromReserve: boolean
+): Promise<boolean> {
+  const { gadget, post } = prepared;
+  const imageUrl = gadget.news.imageUrl!;
+
+  const sent = await sendPost({
+    text: post.post,
+    photoUrl: imageUrl,
+    dryRun,
+    parseMode: "HTML",
+  });
+
+  if (!sent) return false;
+
+  const postedAt = new Date().toISOString();
+  const scheduledSlot = trigger === "cron" ? getInTheBoxScheduledSlot() : null;
+
+  if (!dryRun) {
+    await saveInTheBoxRecord({
+      postedAt,
       url: gadget.news.url,
       title: gadget.news.title,
       source: gadget.news.source,
-      status: "rejected",
-      boxCandidate: true,
-      isPhysicalDevice: true,
-      canBePutInABox: true,
-      hasDeviceImage: false,
-      imageType: null,
-      imageSource: null,
-      rejectReason: imageVerification.rejectReason ?? "Device image not found",
-      interestingForRadar: false,
-      routedToRadar: false,
+      deviceName: gadget.analysis.deviceName ?? gadget.news.title,
+      deviceType: gadget.analysis.deviceType,
+      technologyInside: gadget.analysis.technologyInside ?? "",
+      whyThisIsADevice: gadget.analysis.whyThisIsADevice,
+      score: gadget.analysis.score,
+      impactHorizon: gadget.analysis.impactHorizon,
+      headline: post.headline,
+      post: post.post,
+      imageUrl,
+      trigger,
+      scheduledSlot,
+      fromReserve,
+    });
+
+    await addPublished({
+      url: gadget.news.url,
+      title: post.headline,
+      publishedAt: gadget.news.publishedAt.toISOString(),
+      postedAt,
+      source: gadget.news.source,
+      score: gadget.analysis.score,
+      level: "signal",
+      category: "engineering",
+      impactHorizon: gadget.analysis.impactHorizon,
+      postType: "in-the-box",
     });
   }
 
+  return true;
+}
+
+async function finishPublishedRun(
+  message: string,
+  stats: InTheBoxRunStats,
+  dryRun: boolean,
+  trigger: InTheBoxTrigger
+): Promise<InTheBoxResult> {
+  stats.message = message;
+  logger.info(message);
+  await persistStats(stats, dryRun);
+  await recordLastRun({
+    trigger: trigger === "manual" ? "telegram" : "cron",
+    success: true,
+    publishedCount: 1,
+    message,
+  });
+  return { success: true, message };
+}
+
+/** Запас: если live RSS не опубликовал — пробуем готовый пост (cron и ручной /box). */
+async function tryPublishFromReserve(
+  trigger: InTheBoxTrigger,
+  dryRun: boolean,
+  stats: InTheBoxRunStats
+): Promise<InTheBoxResult | null> {
+  const slot = trigger === "cron" ? getInTheBoxScheduledSlot() : null;
+
+  const reserve = await getAvailableInTheBoxReserve();
+  if (reserve.length === 0) {
+    logger.info(`Box reserve: empty (${trigger}), nothing to publish`);
+    return null;
+  }
+
+  logger.info(`Box reserve (${trigger}): trying ${reserve.length} stored post(s)...`);
+
+  for (const entry of reserve) {
+    if (await isAlreadyPublished(entry.url) || (await isKnownInTheBoxUrl(entry.url))) {
+      if (!dryRun) await removeFromInTheBoxReserve(entry.url);
+      continue;
+    }
+
+    const accessible = await verifyImageUrlAccessible(entry.imageUrl);
+    if (!accessible) {
+      logger.warn(`Reserve image unavailable, dropping: ${entry.deviceName}`);
+      if (!dryRun) await removeFromInTheBoxReserve(entry.url);
+      continue;
+    }
+
+    const sent = await sendPost({
+      text: entry.post,
+      photoUrl: entry.imageUrl,
+      dryRun,
+      parseMode: "HTML",
+    });
+
+    if (!sent) continue;
+
+    stats.published = 1;
+    stats.publishedDeviceName = entry.deviceName;
+    stats.reserveUsed = true;
+
+    if (!dryRun) {
+      await saveInTheBoxRecord({
+        postedAt: new Date().toISOString(),
+        url: entry.url,
+        title: entry.title,
+        source: entry.source,
+        deviceName: entry.deviceName,
+        deviceType: entry.deviceType,
+        technologyInside: entry.technologyInside,
+        whyThisIsADevice: entry.whyThisIsADevice,
+        score: entry.score,
+        impactHorizon: entry.impactHorizon,
+        headline: entry.headline,
+        post: entry.post,
+        imageUrl: entry.imageUrl,
+        trigger,
+        scheduledSlot: slot,
+        fromReserve: true,
+      });
+
+      await addPublished({
+        url: entry.url,
+        title: entry.headline,
+        publishedAt: entry.newsPublishedAt,
+        postedAt: new Date().toISOString(),
+        source: entry.source,
+        score: entry.score,
+        level: "signal",
+        category: "engineering",
+        impactHorizon: entry.impactHorizon,
+        postType: "in-the-box",
+      });
+
+      await removeFromInTheBoxReserve(entry.url);
+    }
+
+    const savedDate = new Date(entry.savedAt).toLocaleDateString("ru-RU");
+    const message = dryRun
+      ? `Dry-run: из запаса — ${entry.deviceName} (сохранено ${savedDate})`
+      : `Опубликовано из запаса: «Будущее в коробке» — ${entry.deviceName} (сохранено ${savedDate})`;
+
+    return finishPublishedRun(message, stats, dryRun, trigger);
+  }
+
   return null;
+}
+
+async function failOrUseReserve(
+  trigger: InTheBoxTrigger,
+  dryRun: boolean,
+  stats: InTheBoxRunStats,
+  baseMessage: string,
+  publishFailures: string[] = []
+): Promise<InTheBoxResult> {
+  const reserveResult = await tryPublishFromReserve(trigger, dryRun, stats);
+  if (reserveResult) {
+    return reserveResult;
+  }
+
+  let message = baseMessage;
+  if (publishFailures.length > 0) {
+    message += `\n\nНе удалось опубликовать ${publishFailures.length} кандидат(ов):\n${publishFailures.slice(0, 5).join("\n")}`;
+  }
+  const reserve = await getAvailableInTheBoxReserve();
+  message += `\n\nЗапас: ${reserve.length} готовых постов.`;
+
+  stats.message = message;
+  logger.info(message);
+  await persistStats(stats, dryRun);
+  return { success: publishFailures.length === 0, message };
 }
 
 export async function runWeeklyInTheBox(
@@ -88,6 +418,7 @@ export async function runWeeklyInTheBox(
   }
 
   inTheBoxRunning = true;
+  const stats = emptyStats(trigger);
 
   try {
     const settings = await loadSettings();
@@ -99,6 +430,8 @@ export async function runWeeklyInTheBox(
         const slotLabel = slot === "wednesday" ? "среда" : "суббота";
         const message = `Слот «${slotLabel}» уже выпущен по расписанию на этой неделе`;
         logger.info(message);
+        stats.message = message;
+        await persistStats(stats, dryRun);
         return { success: true, message };
       }
     }
@@ -116,18 +449,25 @@ export async function runWeeklyInTheBox(
     const deduped = dedupeNews(fresh);
     logger.info(`Fresh gadget feeds (last ${RSS_LOOKBACK_DAYS}d): ${deduped.length}`);
 
+    stats.totalCandidates = deduped.length;
+
     const unknown = [];
     for (const item of deduped) {
       if (await isKnownInTheBoxUrl(item.url)) continue;
       if (await isAlreadyPublished(item.url)) continue;
       unknown.push(item);
     }
+
+    stats.rejectedDuplicate = deduped.length - unknown.length;
     logger.info(`New gadget candidates: ${unknown.length}`);
 
     if (unknown.length === 0) {
-      const message = "Нет новых материалов для рубрики за неделю";
-      logger.info(message);
-      return { success: true, message };
+      return failOrUseReserve(
+        trigger,
+        dryRun,
+        stats,
+        "Нет новых материалов для рубрики за неделю"
+      );
     }
 
     const { passed: afterPolicy, rejected: policyRejected } = filterByContentPolicy(unknown);
@@ -138,6 +478,8 @@ export async function runWeeklyInTheBox(
     }
 
     const { passed, rejected } = prefilterGadgetNews(afterPolicy);
+    stats.rejectedPrefilter = rejected.length;
+
     if (rejected.length > 0) {
       logger.info(`Gadget pre-filter: ${passed.length} passed, ${rejected.length} rejected`);
       for (const r of rejected) {
@@ -146,12 +488,16 @@ export async function runWeeklyInTheBox(
     }
 
     if (passed.length === 0) {
-      const message = "После фильтра не осталось кандидатов с физическим устройством";
-      logger.info(message);
-      return { success: true, message };
+      return failOrUseReserve(trigger, dryRun, stats, formatBoxFailureMessage(stats));
     }
 
-    const { accepted, evaluated } = await analyzeGadgets(passed);
+    const enriched = await enrichNewsBatch(passed);
+    const withImages = enriched.filter((n) => n.imageUrl).length;
+    logger.info(`Article images: ${withImages}/${enriched.length} candidates have imageUrl`);
+
+    const { accepted, evaluated } = await analyzeGadgets(enriched);
+    stats.accepted = accepted.length;
+    tallyAiRejections(evaluated, stats);
 
     const evaluatedAt = new Date().toISOString();
     const rejectionEntries: InTheBoxRejection[] = evaluated
@@ -187,102 +533,77 @@ export async function runWeeklyInTheBox(
       }
     }
 
-    const best = await pickPublishableWithVerifiedImage(accepted, evaluatedAt, rejectionEntries);
-
-    if (!best) {
-      const message =
-        evaluated.length > 0
-          ? "Нет материала с подтверждённым фото устройства для публикации"
-          : "AI не проанализировал кандидатов";
-
-      if (!dryRun && rejectionEntries.length > 0) {
-        await saveInTheBoxRejections(rejectionEntries);
-      }
-
-      logger.info(message);
-      return { success: true, message };
-    }
-
     if (!dryRun && rejectionEntries.length > 0) {
       await saveInTheBoxRejections(rejectionEntries);
     }
 
-    logger.info(
-      `Selected device: "${best.gadget.analysis.deviceName}" (${best.gadget.analysis.deviceType}, score ${best.gadget.analysis.score}, image ${best.imageVerification.imageType}) — ${best.gadget.news.title}`
-    );
+    const publishFailures: string[] = [];
+    const reserveCandidates: PreparedGadget[] = [];
 
-    const postResult = await generateInTheBoxPost(best.gadget);
-    if (!postResult) {
-      return { success: false, message: "Не удалось сгенерировать пост рубрики" };
+    for (let i = 0; i < accepted.length; i++) {
+      const gadget = accepted[i];
+      if (!gadget) continue;
+
+      const prepared = await prepareGadgetForPublish(
+        gadget,
+        evaluatedAt,
+        rejectionEntries,
+        stats
+      );
+      if (!prepared) continue;
+
+      const published = await commitPublication(prepared, trigger, dryRun, false);
+      if (published) {
+        stats.published = 1;
+        stats.publishedDeviceName = prepared.gadget.analysis.deviceName;
+
+        const extraForReserve: PreparedGadget[] = [];
+        for (let j = i + 1; j < accepted.length; j++) {
+          const next = accepted[j];
+          if (!next) continue;
+          const extraPrepared = await prepareGadgetForPublish(
+            next,
+            evaluatedAt,
+            rejectionEntries,
+            stats
+          );
+          if (extraPrepared) extraForReserve.push(extraPrepared);
+        }
+        await saveReserveFromPrepared(extraForReserve, trigger, dryRun, stats);
+
+        const message = dryRun
+          ? `Dry-run: «Будущее в коробке» — ${prepared.gadget.analysis.deviceName}`
+          : `Опубликовано: «Будущее в коробке» — ${prepared.gadget.analysis.deviceName}`;
+
+        if ((stats.reserveAdded ?? 0) > 0) {
+          const reserveMsg = dryRun
+            ? ` (+${stats.reserveAdded} в запас)`
+            : ` (+${stats.reserveAdded} в запас)`;
+          return finishPublishedRun(message + reserveMsg, stats, dryRun, trigger);
+        }
+
+        return finishPublishedRun(message, stats, dryRun, trigger);
+      }
+
+      publishFailures.push(
+        `${prepared.gadget.analysis.deviceName}: Telegram не принял пост`
+      );
+      reserveCandidates.push(prepared);
     }
 
-    const imageUrl = best.gadget.news.imageUrl;
-    if (!imageUrl) {
-      return { success: false, message: "Нет URL изображения устройства для публикации" };
-    }
+    await saveReserveFromPrepared(reserveCandidates, trigger, dryRun, stats);
 
-    const sent = await sendPost({
-      text: postResult.post,
-      photoUrl: imageUrl,
+    return failOrUseReserve(
+      trigger,
       dryRun,
-      parseMode: "HTML",
-    });
-
-    if (!sent) {
-      return { success: false, message: "Не удалось опубликовать рубрику в Telegram" };
-    }
-
-    const postedAt = new Date().toISOString();
-    const scheduledSlot = trigger === "cron" ? getInTheBoxScheduledSlot() : null;
-
-    if (!dryRun) {
-      await saveInTheBoxRecord({
-        postedAt,
-        url: best.gadget.news.url,
-        title: best.gadget.news.title,
-        source: best.gadget.news.source,
-        deviceName: best.gadget.analysis.deviceName ?? best.gadget.news.title,
-        deviceType: best.gadget.analysis.deviceType,
-        technologyInside: best.gadget.analysis.technologyInside ?? "",
-        whyThisIsADevice: best.gadget.analysis.whyThisIsADevice,
-        score: best.gadget.analysis.score,
-        impactHorizon: best.gadget.analysis.impactHorizon,
-        headline: postResult.headline,
-        post: postResult.post,
-        imageUrl,
-        trigger,
-        scheduledSlot,
-      });
-
-      await addPublished({
-        url: best.gadget.news.url,
-        title: postResult.headline,
-        publishedAt: best.gadget.news.publishedAt.toISOString(),
-        postedAt,
-        source: best.gadget.news.source,
-        score: best.gadget.analysis.score,
-        level: "signal",
-        category: "engineering",
-        impactHorizon: best.gadget.analysis.impactHorizon,
-        postType: "in-the-box",
-      });
-    }
-
-    const message = dryRun
-      ? `Dry-run: «Будущее в коробке» — ${best.gadget.analysis.deviceName}`
-      : `Опубликовано: «Будущее в коробке» — ${best.gadget.analysis.deviceName}`;
-
-    logger.info(message);
-    await recordLastRun({
-      trigger: trigger === "manual" ? "telegram" : "cron",
-      success: true,
-      publishedCount: 1,
-      message,
-    });
-
-    return { success: true, message };
+      stats,
+      formatBoxFailureMessage(stats),
+      publishFailures
+    );
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    stats.message = errMsg;
+    await persistStats(stats, (await loadSettings()).dryRun);
     logger.error("Weekly in-the-box failed", error);
     return { success: false, message: errMsg };
   } finally {

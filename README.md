@@ -79,14 +79,33 @@ TechCrunch, The Verge, Ars Technica, MIT Technology Review, IEEE Spectrum, New A
 
 ### Рубрика «Будущее в коробке»
 
-Допуск: `boxCandidate` + `hasDeviceImage` + vision-проверка картинки.
+Допуск: `boxCandidate` + изображение (RSS или og:image со страницы) + vision-проверка.
 
-- Pre-filter + AI (`analyzeGadget.ts`) — только физические устройства
-- Vision (`verifyDeviceImage.ts`) перед публикацией
-- Пост: **фото устройства + подпись** (не текст без картинки)
-- Отклонения → `data/in-the-box-rejections.json`
-- Интересные **не-устройства** (реклама, партнёрства) могут уйти в основной Radar; **устройство без фото** — только архив
-- `/box` в канал; ручной запуск **не блокирует** слоты среды/субботы по cron
+**Источники (приоритет):** Engadget, Tom's Guide, T3, 3DNews, Mobile-Review, Apple/Samsung/Meta и др. (`inTheBoxSources.ts`).
+
+**Пайплайн:**
+
+1. Pre-filter (`gadgetPrefilter.ts`) — расширенный whitelist, обход для URL с `review` / `обзор`
+2. Fallback картинки (`articleImage.ts`) — og:image, twitter:image, JSON-LD, если в RSS нет фото
+3. AI batch (`analyzeGadget.ts`) — главный gate: `boxCandidate`; пост генерируется с автоподстановкой полей
+4. Vision (`verifyDeviceImage.ts`) перед публикацией
+5. Пост (`generateInTheBoxPost.ts`) — обрезка до лимита Telegram; перебор кандидатов, если первый не собрался
+6. Публикация: **фото устройства + подпись** (`sendPhoto`)
+
+**Стратегический запас** (`data/in-the-box-reserve.json`):
+
+| Параметр | Значение |
+|---|---|
+| Размер | до **3** готовых постов |
+| Срок | **7 дней** |
+| Пополняет | **cron** (среда/суббота) — лишние прошедшие vision+текст |
+| Берёт | **cron** (ср/сб) и **ручной `/box`**, если live RSS не опубликовал |
+
+**Прочее:**
+
+- Отклонения → `data/in-the-box-rejections.json`; статистика прогонов → `data/in-the-box-stats.json`
+- Интересные **не-устройства** могут уйти в основной Radar
+- `/box` → канал; ручной запуск **не блокирует** cron-слоты среды/субботы
 
 ## Быстрый старт
 
@@ -157,7 +176,9 @@ DRY_RUN=false
 | `/panel` | Адрес панели |
 | `/trends` | Направление недели |
 | `/github` | GitHub-сигналы; `/github force` — повтор недели |
-| `/box` | Будущее в коробке → **канал** |
+| `/box` | Будущее в коробке → **канал** (live RSS → запас) |
+| `/boxstats` | Статистика последних прогонов `/box` |
+| `/boxreserve` | Запас рубрики (до 3 постов) |
 | `/queue` | Очередь публикаций |
 | `/queue-prune` | Очистка очереди |
 | `/source-stats` | Статистика источников |
@@ -191,8 +212,8 @@ src/
   rss/            fetchNews, inTheBoxSources
   telegram/       канал + admin-команды
   dashboard/      веб-панель
-  storage/        news, published, observations, gittrend, inTheBox, settings
-  utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage
+  storage/        news, published, observations, gittrend, inTheBox, inTheBoxReserve, settings
+  utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport
 scripts/
   preview-gittrend-admin.ts   превью GitTrend в личку
 data/
@@ -202,6 +223,8 @@ data/
   gittrend.json               state GitHub-рубрики
   in-the-box.json             опубликованные гаджеты
   in-the-box-rejections.json  архив отклонённых кандидатов
+  in-the-box-reserve.json     запас готовых постов (макс. 3, 7 дней)
+  in-the-box-stats.json       статистика прогонов /box
   settings.json               лимиты, RSS, even spread
 docs/Радар будущего.md        заметка Obsidian
 ```

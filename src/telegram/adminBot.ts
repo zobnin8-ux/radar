@@ -6,6 +6,9 @@ import {
   runQueueInjection,
 } from "../pipeline/runQueueInjection.js";
 import { isInTheBoxRunning, runWeeklyInTheBox } from "../pipeline/runWeeklyInTheBox.js";
+import { getRecentInTheBoxRunStats } from "../storage/inTheBoxStore.js";
+import { formatInTheBoxReserveStatus } from "../storage/inTheBoxReserveStore.js";
+import { formatBoxStatsHistory } from "../utils/boxRunReport.js";
 import { isGitTrendRunning, runWeeklyGitTrend } from "../pipeline/runWeeklyGitTrend.js";
 import { isTrendsRunning, runWeeklyTrends } from "../pipeline/runWeeklyTrends.js";
 import { getAdminChatId, isAdminUser, loadAdmin, saveAdmin } from "../storage/adminStore.js";
@@ -42,6 +45,8 @@ const HELP_TEXT = `📡 Радар будущего — команды
 /trends — направление недели (RSS)
 /github — GitHub-тренды (GitTrend)
 /box — будущее в коробке (гаджеты, в канал)
+/boxstats — статистика прогонов /box
+/boxreserve — запас рубрики (до 3, читает /box и cron)
 /queue — очередь публикаций
 /queue-prune — очередь: очистка
 /source-stats — статистика источников
@@ -199,6 +204,17 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       await sendTelegramMessage(chatId, "📦 Формирую рубрику «Будущее в коробке»...");
       const result = await runWeeklyInTheBox({ trigger: "manual" });
       await sendTelegramMessage(chatId, result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+      break;
+    }
+
+    case "/boxstats": {
+      const stats = await getRecentInTheBoxRunStats(10);
+      await sendTelegramMessage(chatId, formatBoxStatsHistory(stats));
+      break;
+    }
+
+    case "/boxreserve": {
+      await sendTelegramMessage(chatId, await formatInTheBoxReserveStatus());
       break;
     }
 

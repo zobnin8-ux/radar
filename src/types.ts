@@ -12,6 +12,8 @@ export interface NewsItem {
   language?: PublicationLanguage;
   /** URL обложки/фото из RSS (enclosure или media) */
   imageUrl?: string;
+  /** Приоритет источника для рубрики «Будущее в коробке» (меньше = выше). */
+  boxPriority?: number;
 }
 
 export const MATURITY_LEVELS = [
