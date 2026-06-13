@@ -1,6 +1,7 @@
 import type { EnrichedGitTrend } from "./enrichGitTrend.js";
 import { buildGitTrendIntroHtml } from "../content/gitTrendIntro.js";
 import type { WeeklyRadarTrend } from "../gittrend/types.js";
+import { appendChannelHashtag, hashtagForGitTrendCategory } from "../utils/channelHashtag.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
 
 const CATEGORY_RU: Record<string, string> = {
@@ -53,11 +54,10 @@ export function buildGitTrendPost(
     watchLines,
     `🔗 <b>Репозитории</b>`,
     repoLines,
-    `#радарбудущего #${trend.category.replace(/-/g, "")}`,
   ].join("\n\n");
 
   const intro = options?.includeIntro ? `${buildGitTrendIntroHtml()}\n` : "";
-  const post = `${intro}${body}`;
+  const post = appendChannelHashtag(`${intro}${body}`, hashtagForGitTrendCategory(trend.category));
 
   if (post.length > MAX_POST_LENGTH) {
     throw new Error(`GitTrend post too long (${post.length} chars)`);

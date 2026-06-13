@@ -10,6 +10,7 @@ import { findEarliestMatchingObservation } from "../utils/observationMatch.js";
 import { loadObservations } from "../storage/observationsStore.js";
 import { generateSignalConfirmedBlock } from "./generateSignalConfirmed.js";
 import { isRussianSource } from "../utils/publicationLanguage.js";
+import { appendChannelHashtag, hashtagForCategory } from "../utils/channelHashtag.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -235,7 +236,10 @@ export async function generateTelegramPost(analyzed: AnalyzedNews): Promise<stri
     ? `\n\n📡 <b>Наблюдение:</b>\n${escapeTelegramHtml(observerComment)}`
     : "";
 
-  const post = buildPost(analyzed, parts, signalConfirmedBlock, observationBlock);
+  const post = appendChannelHashtag(
+    buildPost(analyzed, parts, signalConfirmedBlock, observationBlock),
+    hashtagForCategory(analysis.category)
+  );
 
   if (post.length > MAX_POST_LENGTH) {
     logger.warn(`Generated post exceeds ${MAX_POST_LENGTH} chars (${post.length}), skipping`);

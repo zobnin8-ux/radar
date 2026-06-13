@@ -4,6 +4,11 @@ import { config } from "../config.js";
 import type { AnalyzedGadget } from "./analyzeGadget.js";
 import { VISUAL_IDENTITY } from "../visual/identity.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
+import {
+  appendChannelHashtag,
+  channelHashtagSuffix,
+  hashtagForInTheBox,
+} from "../utils/channelHashtag.js";
 import { generateObserverComment } from "./generateObserverComment.js";
 import { logger } from "../utils/logger.js";
 
@@ -13,6 +18,9 @@ const openai = new OpenAI({
 });
 
 const MAX_POST_LENGTH = 1020;
+const IN_THE_BOX_HASHTAG = hashtagForInTheBox();
+const IN_THE_BOX_BODY_MAX =
+  MAX_POST_LENGTH - channelHashtagSuffix(IN_THE_BOX_HASHTAG).length;
 const OBSERVATION_BLOCK_RE =
   /\n\n📡 <b>Наблюдение:<\/b>\n[\s\S]*?(?=\n\n<b>Источник:<\/b>)/;
 
@@ -192,14 +200,14 @@ Impact horizon: ${analysis.impactHorizon}`,
   }
 
   let post = buildPostHtml(parts, observerComment, news);
-  let fitted = fitInTheBoxPostToLimit(post);
+  let fitted = fitInTheBoxPostToLimit(post, IN_THE_BOX_BODY_MAX);
 
-  if (fitted.post.length > MAX_POST_LENGTH && includeObservation) {
+  if (fitted.post.length > IN_THE_BOX_BODY_MAX && includeObservation) {
     post = buildPostHtml(parts, null, news);
-    fitted = fitInTheBoxPostToLimit(post);
+    fitted = fitInTheBoxPostToLimit(post, IN_THE_BOX_BODY_MAX);
   }
 
-  if (fitted.post.length > MAX_POST_LENGTH) {
+  if (fitted.post.length > IN_THE_BOX_BODY_MAX) {
     logger.warn(`In-the-box post still too long after trim (${fitted.post.length})`);
     return { ok: false, reason: "too_long", length: fitted.post.length };
   }
@@ -208,5 +216,7 @@ Impact horizon: ${analysis.impactHorizon}`,
     logger.info(`In-the-box post fitted to ${fitted.post.length} chars`);
   }
 
-  return { ok: true, result: { post: fitted.post, headline: parts.headline } };
+  const finalPost = appendChannelHashtag(fitted.post, IN_THE_BOX_HASHTAG);
+
+  return { ok: true, result: { post: finalPost, headline: parts.headline } };
 }
