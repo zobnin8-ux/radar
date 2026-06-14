@@ -49,6 +49,7 @@ export async function runWeeklyTrends(): Promise<TrendsResult> {
     const sent = await sendPost({
       text: result.post,
       dryRun,
+      parseMode: "HTML",
     });
     if (!sent) {
       return { success: false, message: "Failed to publish weekly trends" };

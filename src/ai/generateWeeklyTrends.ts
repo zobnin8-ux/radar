@@ -3,6 +3,9 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { IMPACT_HORIZONS, type NewsRecord } from "../types.js";
 import { computeDigestScore, computeWeightedScore } from "../utils/sourceScore.js";
+import { appendChannelHashtag, hashtagForWeeklyTrends } from "../utils/channelHashtag.js";
+import { escapeTelegramHtml } from "../utils/telegramHtml.js";
+import { VISUAL_IDENTITY } from "../visual/identity.js";
 import { logger } from "../utils/logger.js";
 
 const openai = new OpenAI({
@@ -11,6 +14,7 @@ const openai = new OpenAI({
 });
 
 const WEEKLY_TRENDS_MAX = 4096;
+const WEEKLY_TRENDS_HASHTAG = hashtagForWeeklyTrends();
 const MIN_ITEMS = 5;
 const SOURCE_POOL = 40;
 
@@ -124,31 +128,43 @@ Rules:
 - Avoid company gossip, funding rounds, gadget reviews unless they represent a real shift
 - Write in natural Russian
 - Exactly 3 trends (not more, not less)
-- This is a weekly flagship post: write substantially. Summary: 4–5 sentences. Each trend description: 4–5 sentences with context, mechanism, and why it matters. Target total assembled length: 2500–3500 characters.
+- Readable in under 2 minutes: summary 2–3 sentences; each trend description 2–3 sentences (no filler)
+- Target total assembled length: 1500–2000 characters
 
 Return JSON:
 {
   "headline": "one compelling Russian headline for the week",
-  "summary": "4-5 sentences: the week's big picture",
+  "summary": "2-3 sentences: the week's big picture",
   "trends": [
     {
       "title": "short Russian trend name",
-      "description": "4-5 sentences: what is moving, how signals connect, and why it matters",
+      "description": "2-3 sentences: what is moving and why it matters",
       "horizon": "now" | "1-3 years" | "3-7 years" | "10+ years"
     }
   ]
 }`;
 
 function buildPost(parsed: z.infer<typeof trendsResponseSchema>): string {
+  const identity = VISUAL_IDENTITY.trends;
+  const esc = escapeTelegramHtml;
   const trends = parsed.trends.slice(0, 3);
-  const body = trends
-    .map(
-      (t, i) =>
-        `${i + 1}. ${t.title}\n\n${t.description}\n\nГоризонт: ${HORIZON_RU[t.horizon] ?? t.horizon}`
-    )
-    .join("\n\n");
 
-  return `🧭 НАПРАВЛЕНИЕ НЕДЕЛИ\n\n${parsed.headline}\n\n${parsed.summary}\n\n${body}`;
+  const trendBlocks = trends
+    .map((t, i) => {
+      const horizon = HORIZON_RU[t.horizon] ?? t.horizon;
+      const separator = i < trends.length - 1 ? "\n\n━━━━━━━━━━━━━━━━\n\n" : "";
+      return `<b>${i + 1}. ${esc(t.title)}</b>\n${esc(t.description)}\n\n<b>Горизонт:</b> ${esc(horizon)}${separator}`;
+    })
+    .join("");
+
+  const body = [
+    `${identity.symbol} <b>${esc(identity.label)}</b>`,
+    `<b>${esc(parsed.headline)}</b>`,
+    esc(parsed.summary),
+    trendBlocks,
+  ].join("\n\n");
+
+  return appendChannelHashtag(body, WEEKLY_TRENDS_HASHTAG);
 }
 
 function fitWeeklyTrendsPost(
@@ -168,19 +184,19 @@ function fitWeeklyTrendsPost(
       0
     );
     const desc = trends[longestIdx].description;
-    if (desc.length <= 120) break;
+    if (desc.length <= 100) break;
     trends[longestIdx] = {
       ...trends[longestIdx],
-      description: desc.slice(0, Math.max(80, desc.length - 80)).trimEnd() + "…",
+      description: desc.slice(0, Math.max(60, desc.length - 60)).trimEnd() + "…",
     };
     post = buildPost({ ...parsed, trends });
   }
 
-  if (post.length > max && parsed.summary.length > 200) {
+  if (post.length > max && parsed.summary.length > 160) {
     post = buildPost({
       ...parsed,
       trends,
-      summary: parsed.summary.slice(0, Math.max(120, parsed.summary.length - 120)).trimEnd() + "…",
+      summary: parsed.summary.slice(0, Math.max(100, parsed.summary.length - 80)).trimEnd() + "…",
     });
   }
 

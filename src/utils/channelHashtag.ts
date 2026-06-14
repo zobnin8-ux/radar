@@ -50,6 +50,10 @@ export function hashtagForGitTrendCategory(category: GitTrendCategory): ChannelH
   return GIT_TREND_TO_HASHTAG[category] ?? null;
 }
 
+export function hashtagForWeeklyTrends(): ChannelHashtag {
+  return "#Science";
+}
+
 export function channelHashtagSuffix(hashtag: ChannelHashtag): string {
   return `\n\n${hashtag}`;
 }
