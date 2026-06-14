@@ -1,5 +1,12 @@
 import "dotenv/config";
 import { z } from "zod";
+import {
+  DEFAULT_POST_INTERVAL_CRON,
+  DEFAULT_PUBLISH_INTERVAL_CRON,
+  DEFAULT_WEEKLY_GITTREND_CRON,
+  DEFAULT_WEEKLY_IN_THE_BOX_CRON,
+  DEFAULT_WEEKLY_TRENDS_CRON,
+} from "./utils/cronSchedule.js";
 
 const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
@@ -8,11 +15,11 @@ const envSchema = z.object({
   TELEGRAM_ADMIN_USER_ID: z.coerce.number().int().positive().optional(),
   MAX_POSTS_PER_DAY: z.coerce.number().int().positive().default(10),
   MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(3),
-  POST_INTERVAL_CRON: z.string().default("0 * * * *"),
-  PUBLISH_INTERVAL_CRON: z.string().default("*/30 * * * *"),
-  WEEKLY_TRENDS_CRON: z.string().default("0 11 * * 0"),
-  WEEKLY_GITTREND_CRON: z.string().default("30 10 * * 0"),
-  WEEKLY_IN_THE_BOX_CRON: z.string().default("20 10 * * 3,6"),
+  POST_INTERVAL_CRON: z.string().default(DEFAULT_POST_INTERVAL_CRON),
+  PUBLISH_INTERVAL_CRON: z.string().default(DEFAULT_PUBLISH_INTERVAL_CRON),
+  WEEKLY_TRENDS_CRON: z.string().default(DEFAULT_WEEKLY_TRENDS_CRON),
+  WEEKLY_GITTREND_CRON: z.string().default(DEFAULT_WEEKLY_GITTREND_CRON),
+  WEEKLY_IN_THE_BOX_CRON: z.string().default(DEFAULT_WEEKLY_IN_THE_BOX_CRON),
   GITTREND_RADAR_URL: z
     .string()
     .url()

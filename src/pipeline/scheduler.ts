@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { config } from "../config.js";
 import { loadSettings } from "../storage/settingsStore.js";
+import { CRON_SCHEDULE_SUMMARY } from "../utils/cronSchedule.js";
 import { logger } from "../utils/logger.js";
 import { isAnyTaskRunning } from "./activeTask.js";
 import { runPipeline } from "./runPipeline.js";
@@ -20,6 +21,7 @@ export async function startScheduler(): Promise<void> {
   startWeeklyInTheBoxScheduler();
   startWeeklyTrendsScheduler();
   startWeeklyGitTrendScheduler();
+  logger.info(`Cron grid (local): ${CRON_SCHEDULE_SUMMARY}`);
 }
 
 export async function reschedule(): Promise<void> {
@@ -108,7 +110,7 @@ function startWeeklyInTheBoxScheduler(): void {
     await runWeeklyInTheBox({ trigger: "cron" });
   });
 
-  logger.info(`In-the-box scheduler: ${cronExpr} (Wed & Sat 10:20 local)`);
+  logger.info(`In-the-box scheduler: ${cronExpr} (Wed & Sat 10:25 local)`);
 }
 
 function startWeeklyTrendsScheduler(): void {
@@ -136,7 +138,7 @@ function startWeeklyTrendsScheduler(): void {
     await runWeeklyTrends();
   });
 
-  logger.info(`Weekly trends scheduler: ${cronExpr} (Sunday 11:00 UTC)`);
+  logger.info(`Weekly trends scheduler: ${cronExpr} (Sunday 11:20 local)`);
 }
 
 function startWeeklyGitTrendScheduler(): void {
@@ -164,5 +166,5 @@ function startWeeklyGitTrendScheduler(): void {
     await runWeeklyGitTrend();
   });
 
-  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:30 local, after Sat 21:00 MSK JSON)`);
+  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:40 local, after Sat 21:00 MSK JSON)`);
 }

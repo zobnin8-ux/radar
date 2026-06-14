@@ -4,9 +4,9 @@
   "categoryQuotaMax": 4,
   "horizonMixPercent": 30,
   "minAiPostsPerDay": 1,
-  "postIntervalCron": "0 */6 * * *",
+  "postIntervalCron": "15 */6 * * *",
   "publishEvenSpread": true,
-  "publishIntervalCron": "0 * * * *",
+  "publishIntervalCron": "5 */2 * * *",
   "dryRun": false,
   "paused": false,
   "rssSources": [
