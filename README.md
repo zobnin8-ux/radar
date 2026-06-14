@@ -16,7 +16,7 @@
 | 4 | Прорыв | Публикуется в канал |
 | — | Сбой системы | Публикуется в канал |
 
-Посты основного потока — **текст + превью ссылки** (HTML). Опционально блок **«📡 Наблюдение»** — комментарий наблюдателя 2.0 (`generateObserverComment`, gpt-4o при публикации).
+Посты основного потока — **текст + превью ссылки** (HTML). В конце — один тематический хэштег (`#AI`, `#Space`, …) для навигации по каналу (`channelHashtag.ts`). Опционально блок **«📡 Наблюдение»** — комментарий наблюдателя 2.0 (`generateObserverComment`, gpt-4o при публикации).
 
 Для уровней **влияние** и **прорыв** при совпадении с прошлым наблюдением может добавляться блок **«📡 Сигнал подтвердился»**.
 
@@ -41,13 +41,13 @@ Cron RSS **не публикует** в канал — только наполн
 
 | Когда (локальное время ПК) | Рубрика | Источник |
 |---|---|---|
-| **Среда и суббота** 10:00 | 📦 **Будущее в коробке** | Отдельные RSS о гаджетах |
+| **Среда и суббота** 10:20 | 📦 **Будущее в коробке** | Отдельные RSS о гаджетах |
 | **Воскресенье** 11:00 | 🧭 **Направление недели** | Сигналы RSS за 7 дней |
-| **Воскресенье** 11:30 | 🔮 **GitHub-сигналы** | [GitTrend](https://github.com/zobnin8-ux/gitrend) |
+| **Воскресенье** 10:00 | 🔮 **GitHub-сигналы** | [GitTrend](https://github.com/zobnin8-ux/gitrend) |
 
 > `node-cron` использует **локальное время Windows**, не UTC. В `.env.example` указаны те же выражения, что в коде.
 
-**GitHub-сигналы:** GitTrend обновляет `weekly-radar.json` по воскресеньям (~10:00 UTC, GitHub Actions). Radar забирает JSON и публикует 0–3 тренда. Первый пост серии — анонс рубрики. Повтор недели: `/github force`.
+**GitHub-сигналы:** GitTrend публикует `weekly-radar.json` в **субботу 21:00 МСК** (18:00 UTC, GitHub Actions). Radar забирает JSON в **воскресенье 10:00** локально и публикует 0–3 тренда. Пустой `trends: []` — тихая неделя, без поста. Первый пост серии — анонс рубрики. Повтор недели: `/github force`. Подробнее: `RADAR-SCHEDULE-UPDATE.md`.
 
 **Будущее в коробке:** только **физические устройства** с **фото устройства** в посте (`sendPhoto`). Не платформы, не партнёрства, не SaaS. Рубрики **не входят** в дневной лимит.
 
@@ -136,8 +136,8 @@ MAX_POSTS_PER_RUN=3
 POST_INTERVAL_CRON=0 */6 * * *
 PUBLISH_INTERVAL_CRON=*/30 * * * *
 WEEKLY_TRENDS_CRON=0 11 * * 0
-WEEKLY_GITTREND_CRON=30 11 * * 0
-WEEKLY_IN_THE_BOX_CRON=0 10 * * 3,6
+WEEKLY_GITTREND_CRON=0 10 * * 0
+WEEKLY_IN_THE_BOX_CRON=20 10 * * 3,6
 GITTREND_RADAR_URL=https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/reports/weekly-radar.json
 GITTREND_MAX_POSTS=3
 GITTREND_MIN_SIGNAL_STRENGTH=medium
@@ -197,8 +197,8 @@ npx tsx scripts/preview-gittrend-admin.ts
 ## Типичная неделя
 
 1. Пн–вс: RSS каждые 6 ч → очередь; публикация каждые 30 мин по графику
-2. **Среда и суббота:** «Будущее в коробке»
-3. **Воскресенье:** «Направление недели» + «GitHub-сигналы»
+2. **Среда и суббота 10:20:** «Будущее в коробке»
+3. **Воскресенье 11:00:** «Направление недели»; **10:00** — GitHub-сигналы (JSON от GitTrend в сб 21:00 МСК)
 4. Вручную: `/run`, `/inject`, `/box`, `/github`
 
 ## Структура проекта
@@ -213,7 +213,7 @@ src/
   telegram/       канал + admin-команды
   dashboard/      веб-панель
   storage/        news, published, observations, gittrend, inTheBox, inTheBoxReserve, settings
-  utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport
+  utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport, channelHashtag
 scripts/
   preview-gittrend-admin.ts   превью GitTrend в личку
 data/
@@ -227,6 +227,7 @@ data/
   in-the-box-stats.json       статистика прогонов /box
   settings.json               лимиты, RSS, even spread
 docs/Радар будущего.md        заметка Obsidian
+RADAR-SCHEDULE-UPDATE.md      расписание GitTrend ↔ Radar
 ```
 
 ## Команды npm

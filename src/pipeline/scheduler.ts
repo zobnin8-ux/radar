@@ -108,7 +108,7 @@ function startWeeklyInTheBoxScheduler(): void {
     await runWeeklyInTheBox({ trigger: "cron" });
   });
 
-  logger.info(`In-the-box scheduler: ${cronExpr} (Wed & Sat 10:00 local)`);
+  logger.info(`In-the-box scheduler: ${cronExpr} (Wed & Sat 10:20 local)`);
 }
 
 function startWeeklyTrendsScheduler(): void {
@@ -164,5 +164,5 @@ function startWeeklyGitTrendScheduler(): void {
     await runWeeklyGitTrend();
   });
 
-  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 11:30 UTC)`);
+  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:00 local, after Sat 21:00 MSK JSON)`);
 }
