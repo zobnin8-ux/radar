@@ -11,7 +11,7 @@ const envSchema = z.object({
   POST_INTERVAL_CRON: z.string().default("0 * * * *"),
   PUBLISH_INTERVAL_CRON: z.string().default("*/30 * * * *"),
   WEEKLY_TRENDS_CRON: z.string().default("0 11 * * 0"),
-  WEEKLY_GITTREND_CRON: z.string().default("0 10 * * 0"),
+  WEEKLY_GITTREND_CRON: z.string().default("30 10 * * 0"),
   WEEKLY_IN_THE_BOX_CRON: z.string().default("20 10 * * 3,6"),
   GITTREND_RADAR_URL: z
     .string()

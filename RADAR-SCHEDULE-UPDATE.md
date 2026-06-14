@@ -21,7 +21,7 @@
 | Было | Стало |
 |------|--------|
 | GitTrend публиковал JSON **воскресенье 10:00 UTC** | **Суббота 18:00 UTC** (= **21:00 МСК**) |
-| Радар забирал ~11:30 UTC | Радар забирает **воскресенье 07:00 UTC** (= **10:00 МСК**) |
+| Радар забирал ~11:30 UTC | Радар забирает **воскресенье 10:30 локально** (= **10:00 МСК** + буфер от publish tick) |
 
 **Зачем:** к воскресенью утром файл уже лежит на GitHub — Радар успевает обработать и опубликовать в канал.
 
@@ -57,9 +57,10 @@ GET https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/reports/weekly-rad
 # .github/workflows/radar-publish.yml (или cron на VPS)
 on:
   schedule:
-    - cron: "0 7 * * 0"   # воскресенье 07:00 UTC = 10:00 МСК
-  workflow_dispatch:
+    - cron: "0 7 * * 0"   # воскресенье 07:00 UTC = 10:00 МСК (на VPS)
 ```
+
+В домашней версии (Windows, локальный cron): **`30 10 * * 0`** — 10:30, чтобы не пересечься с publish tick.
 
 | Параметр | Значение |
 |----------|----------|
@@ -86,7 +87,7 @@ on:
 ```text
 Сб 21:00 МСК  →  GitTrend push JSON
        ↓
-Вс 10:00 МСК  →  Радар fetch → enrich → Telegram
+Вс 10:30 МСК  →  Радар fetch → enrich → Telegram
 ```
 
 ```mermaid
@@ -97,7 +98,7 @@ sequenceDiagram
   participant TG as Telegram
 
   GT->>GH: commit weekly-radar.json (сб 18:00 UTC / 21:00 МСК)
-  RF->>GH: GET weekly-radar.json (вс 07:00 UTC / 10:00 МСК)
+  RF->>GH: GET weekly-radar.json (вс 10:30 МСК / 30 10 * * 0 local)
   RF->>RF: validate + select + enrich
   RF->>TG: sendMessage (если publish)
 ```

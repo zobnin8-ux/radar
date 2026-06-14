@@ -164,5 +164,5 @@ function startWeeklyGitTrendScheduler(): void {
     await runWeeklyGitTrend();
   });
 
-  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:00 local, after Sat 21:00 MSK JSON)`);
+  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:30 local, after Sat 21:00 MSK JSON)`);
 }

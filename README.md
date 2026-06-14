@@ -43,11 +43,11 @@ Cron RSS **не публикует** в канал — только наполн
 |---|---|---|
 | **Среда и суббота** 10:20 | 📦 **Будущее в коробке** | Отдельные RSS о гаджетах |
 | **Воскресенье** 11:00 | 🧭 **Направление недели** | Сигналы RSS за 7 дней |
-| **Воскресенье** 10:00 | 🔮 **GitHub-сигналы** | [GitTrend](https://github.com/zobnin8-ux/gitrend) |
+| **Воскресенье** 10:30 | 🔮 **GitHub-сигналы** | [GitTrend](https://github.com/zobnin8-ux/gitrend) |
 
 > `node-cron` использует **локальное время Windows**, не UTC. В `.env.example` указаны те же выражения, что в коде.
 
-**GitHub-сигналы:** GitTrend публикует `weekly-radar.json` в **субботу 21:00 МСК** (18:00 UTC, GitHub Actions). Radar забирает JSON в **воскресенье 10:00** локально и публикует 0–3 тренда. Пустой `trends: []` — тихая неделя, без поста. Первый пост серии — анонс рубрики. Повтор недели: `/github force`. Подробнее: `RADAR-SCHEDULE-UPDATE.md`.
+**GitHub-сигналы:** GitTrend публикует `weekly-radar.json` в **субботу 21:00 МСК** (18:00 UTC, GitHub Actions). Radar забирает JSON в **воскресенье 10:30** локально (сдвиг от 10:00, чтобы не пересечься с publish tick) и публикует 0–3 тренда. Пустой `trends: []` — тихая неделя, без поста. Первый пост серии — анонс рубрики. Повтор недели: `/github force`. Подробнее: `RADAR-SCHEDULE-UPDATE.md`.
 
 **Будущее в коробке:** только **физические устройства** с **фото устройства** в посте (`sendPhoto`). Не платформы, не партнёрства, не SaaS. Рубрики **не входят** в дневной лимит.
 
@@ -136,7 +136,7 @@ MAX_POSTS_PER_RUN=3
 POST_INTERVAL_CRON=0 */6 * * *
 PUBLISH_INTERVAL_CRON=*/30 * * * *
 WEEKLY_TRENDS_CRON=0 11 * * 0
-WEEKLY_GITTREND_CRON=0 10 * * 0
+WEEKLY_GITTREND_CRON=30 10 * * 0
 WEEKLY_IN_THE_BOX_CRON=20 10 * * 3,6
 GITTREND_RADAR_URL=https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/reports/weekly-radar.json
 GITTREND_MAX_POSTS=3
@@ -198,7 +198,7 @@ npx tsx scripts/preview-gittrend-admin.ts
 
 1. Пн–вс: RSS каждые 6 ч → очередь; публикация каждые 30 мин по графику
 2. **Среда и суббота 10:20:** «Будущее в коробке»
-3. **Воскресенье 11:00:** «Направление недели»; **10:00** — GitHub-сигналы (JSON от GitTrend в сб 21:00 МСК)
+3. **Воскресенье 11:00:** «Направление недели»; **10:30** — GitHub-сигналы (JSON от GitTrend в сб 21:00 МСК)
 4. Вручную: `/run`, `/inject`, `/box`, `/github`
 
 ## Структура проекта
