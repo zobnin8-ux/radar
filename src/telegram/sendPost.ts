@@ -8,6 +8,13 @@ interface TelegramResponse {
 }
 
 const TELEGRAM_CAPTION_MAX = 1024;
+const TELEGRAM_MESSAGE_MAX = 4096;
+
+function fitTelegramText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  logger.warn(`Post truncated for Telegram (${text.length} → ${max} chars)`);
+  return text.slice(0, max - 1) + "…";
+}
 
 export interface SendPostOptions {
   text: string;
@@ -15,6 +22,37 @@ export interface SendPostOptions {
   parseMode?: "HTML";
   /** Фото устройства — обязательно для рубрики «Будущее в коробке» */
   photoUrl?: string;
+  /**
+   * Длинный текст к фото: сначала фото без подписи, затем полный текст отдельным сообщением.
+   * Обходит лимит подписи Telegram (1024) для рубрики «Будущее в коробке».
+   */
+  splitPhotoAndText?: boolean;
+}
+
+async function callTelegram(
+  token: string,
+  method: string,
+  body: Record<string, unknown>
+): Promise<boolean> {
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(60_000),
+    body: JSON.stringify(body),
+  });
+
+  const data = (await response.json()) as TelegramResponse;
+
+  if (!response.ok || !data.ok) {
+    logger.error("Telegram API error", {
+      status: response.status,
+      description: data.description,
+      method,
+    });
+    return false;
+  }
+
+  return true;
 }
 
 export async function sendPost(
@@ -38,7 +76,9 @@ export async function sendPost(
   if (isDryRun) {
     logger.info(
       opts.photoUrl
-        ? "DRY_RUN mode — photo post not sent"
+        ? opts.splitPhotoAndText
+          ? "DRY_RUN mode — photo + text post not sent"
+          : "DRY_RUN mode — photo post not sent"
         : "DRY_RUN mode — post not sent (text + link preview)"
     );
     console.log("\n" + "=".repeat(50));
@@ -56,51 +96,54 @@ export async function sendPost(
     return false;
   }
 
-  const caption =
-    opts.text.length > TELEGRAM_CAPTION_MAX
-      ? opts.text.slice(0, TELEGRAM_CAPTION_MAX - 1) + "…"
-      : opts.text;
-
-  const url = opts.photoUrl
-    ? `https://api.telegram.org/bot${token}/sendPhoto`
-    : `https://api.telegram.org/bot${token}/sendMessage`;
-
-  const body: Record<string, unknown> = opts.photoUrl
-    ? {
-        chat_id: channelId,
-        photo: opts.photoUrl,
-        caption,
-      }
-    : {
-        chat_id: channelId,
-        text: caption,
-        disable_web_page_preview: false,
-      };
-
-  if (opts.parseMode) {
-    body.parse_mode = opts.parseMode;
-  }
+  const parseMode = opts.parseMode ? { parse_mode: opts.parseMode } : {};
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(60_000),
-      body: JSON.stringify(body),
-    });
+    if (opts.photoUrl && opts.splitPhotoAndText) {
+      const textBody = fitTelegramText(opts.text, TELEGRAM_MESSAGE_MAX);
 
-    const data = (await response.json()) as TelegramResponse;
-
-    if (!response.ok || !data.ok) {
-      logger.error("Telegram API error", {
-        status: response.status,
-        description: data.description,
-        method: opts.photoUrl ? "sendPhoto" : "sendMessage",
+      const photoOk = await callTelegram(token, "sendPhoto", {
+        chat_id: channelId,
+        photo: opts.photoUrl,
+        ...parseMode,
       });
-      return false;
+      if (!photoOk) return false;
+
+      const textOk = await callTelegram(token, "sendMessage", {
+        chat_id: channelId,
+        text: textBody,
+        disable_web_page_preview: true,
+        ...parseMode,
+      });
+      if (!textOk) return false;
+
+      logger.info("Post sent with device photo + full text message");
+      return true;
     }
 
-    logger.info(opts.photoUrl ? "Post sent with device photo" : "Post sent (text with link preview)");
+    const maxLen = opts.photoUrl ? TELEGRAM_CAPTION_MAX : TELEGRAM_MESSAGE_MAX;
+    const outgoing = fitTelegramText(opts.text, maxLen);
+
+    if (opts.photoUrl) {
+      const ok = await callTelegram(token, "sendPhoto", {
+        chat_id: channelId,
+        photo: opts.photoUrl,
+        caption: outgoing,
+        ...parseMode,
+      });
+      if (!ok) return false;
+      logger.info("Post sent with device photo");
+      return true;
+    }
+
+    const ok = await callTelegram(token, "sendMessage", {
+      chat_id: channelId,
+      text: outgoing,
+      disable_web_page_preview: false,
+      ...parseMode,
+    });
+    if (!ok) return false;
+    logger.info("Post sent (text with link preview)");
     return true;
   } catch (error) {
     logger.error("Failed to send post to Telegram", error);

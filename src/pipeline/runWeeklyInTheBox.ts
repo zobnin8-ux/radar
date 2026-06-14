@@ -231,6 +231,7 @@ async function commitPublication(
   const sent = await sendPost({
     text: post.post,
     photoUrl: imageUrl,
+    splitPhotoAndText: true,
     dryRun,
     parseMode: "HTML",
   });
@@ -327,6 +328,7 @@ async function tryPublishFromReserve(
     const sent = await sendPost({
       text: entry.post,
       photoUrl: entry.imageUrl,
+      splitPhotoAndText: true,
       dryRun,
       parseMode: "HTML",
     });

@@ -10,7 +10,7 @@ const openai = new OpenAI({
   timeout: 90_000,
 });
 
-const MAX_DIGEST_LENGTH = 4000;
+const WEEKLY_TRENDS_MAX = 4096;
 const MIN_ITEMS = 5;
 const SOURCE_POOL = 40;
 
@@ -32,6 +32,48 @@ const HORIZON_RU: Record<string, string> = {
   "3-7 years": "3–7 лет",
   "10+ years": "10+ лет",
 };
+
+const HORIZON_ALIASES: Record<string, (typeof IMPACT_HORIZONS)[number]> = {
+  now: "now",
+  immediate: "now",
+  сейчас: "now",
+  "1-3": "1-3 years",
+  "1-3y": "1-3 years",
+  "1-3 years": "1-3 years",
+  "1-3 года": "1-3 years",
+  "1–3 года": "1-3 years",
+  "3-7": "3-7 years",
+  "3-7y": "3-7 years",
+  "3-7 years": "3-7 years",
+  "3-7 лет": "3-7 years",
+  "3–7 лет": "3-7 years",
+  "10+": "10+ years",
+  "10+ years": "10+ years",
+  "10+ лет": "10+ years",
+  longterm: "10+ years",
+};
+
+function normalizeHorizon(value: unknown): (typeof IMPACT_HORIZONS)[number] | null {
+  if (typeof value !== "string") return null;
+  const key = value.toLowerCase().trim();
+  return HORIZON_ALIASES[key] ?? HORIZON_ALIASES[value.trim()] ?? null;
+}
+
+function normalizeTrendsPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const data = raw as Record<string, unknown>;
+  if (!Array.isArray(data.trends)) return raw;
+
+  return {
+    ...data,
+    trends: data.trends.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const trend = item as Record<string, unknown>;
+      const horizon = normalizeHorizon(trend.horizon);
+      return horizon ? { ...trend, horizon } : trend;
+    }),
+  };
+}
 
 function formatSources(records: NewsRecord[]): string {
   return records
@@ -82,15 +124,16 @@ Rules:
 - Avoid company gossip, funding rounds, gadget reviews unless they represent a real shift
 - Write in natural Russian
 - Exactly 3 trends (not more, not less)
+- This is a weekly flagship post: write substantially. Summary: 4–5 sentences. Each trend description: 4–5 sentences with context, mechanism, and why it matters. Target total assembled length: 2500–3500 characters.
 
 Return JSON:
 {
   "headline": "one compelling Russian headline for the week",
-  "summary": "2-3 sentences: the week's big picture",
+  "summary": "4-5 sentences: the week's big picture",
   "trends": [
     {
       "title": "short Russian trend name",
-      "description": "2-3 sentences: what is moving and why it matters",
+      "description": "4-5 sentences: what is moving, how signals connect, and why it matters",
       "horizon": "now" | "1-3 years" | "3-7 years" | "10+ years"
     }
   ]
@@ -106,6 +149,46 @@ function buildPost(parsed: z.infer<typeof trendsResponseSchema>): string {
     .join("\n\n");
 
   return `🧭 НАПРАВЛЕНИЕ НЕДЕЛИ\n\n${parsed.headline}\n\n${parsed.summary}\n\n${body}`;
+}
+
+function fitWeeklyTrendsPost(
+  parsed: z.infer<typeof trendsResponseSchema>,
+  max = WEEKLY_TRENDS_MAX
+): string {
+  const trends = parsed.trends.slice(0, 3).map((t) => ({ ...t }));
+  let post = buildPost({ ...parsed, trends });
+
+  if (post.length <= max) return post;
+
+  logger.warn(`Trends post too long (${post.length}), fitting to ${max} chars`);
+
+  for (let i = 0; i < 40 && post.length > max; i++) {
+    const longestIdx = trends.reduce(
+      (best, t, idx) => (t.description.length > trends[best].description.length ? idx : best),
+      0
+    );
+    const desc = trends[longestIdx].description;
+    if (desc.length <= 120) break;
+    trends[longestIdx] = {
+      ...trends[longestIdx],
+      description: desc.slice(0, Math.max(80, desc.length - 80)).trimEnd() + "…",
+    };
+    post = buildPost({ ...parsed, trends });
+  }
+
+  if (post.length > max && parsed.summary.length > 200) {
+    post = buildPost({
+      ...parsed,
+      trends,
+      summary: parsed.summary.slice(0, Math.max(120, parsed.summary.length - 120)).trimEnd() + "…",
+    });
+  }
+
+  if (post.length > max) {
+    throw new Error(`Weekly trends post still too long after fit (${post.length} chars)`);
+  }
+
+  return post;
 }
 
 export async function generateWeeklyTrends(
@@ -147,29 +230,13 @@ export async function generateWeeklyTrends(
 
   let parsed: z.infer<typeof trendsResponseSchema>;
   try {
-    parsed = trendsResponseSchema.parse(JSON.parse(content));
+    parsed = trendsResponseSchema.parse(normalizeTrendsPayload(JSON.parse(content)));
   } catch (error) {
     logger.error("Failed to parse trends response", { content, error });
     throw new Error("Invalid trends response from OpenAI");
   }
 
-  const post = buildPost(parsed);
-  if (post.length > MAX_DIGEST_LENGTH) {
-    logger.warn(`Trends post too long (${post.length}), trimming summary`);
-    const trimmed = buildPost({
-      ...parsed,
-      summary: parsed.summary.slice(0, 200) + "…",
-    });
-    if (trimmed.length > MAX_DIGEST_LENGTH) {
-      return null;
-    }
-    return {
-      post: trimmed,
-      headline: parsed.headline,
-      summary: parsed.summary,
-      trends: parsed.trends.slice(0, 3),
-    };
-  }
+  const post = fitWeeklyTrendsPost(parsed);
 
   return {
     post,

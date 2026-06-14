@@ -3,6 +3,7 @@ import { buildGitTrendIntroHtml } from "../content/gitTrendIntro.js";
 import type { WeeklyRadarTrend } from "../gittrend/types.js";
 import { appendChannelHashtag, hashtagForGitTrendCategory } from "../utils/channelHashtag.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
+import { logger } from "../utils/logger.js";
 
 const CATEGORY_RU: Record<string, string> = {
   "ai-agents": "AI-агенты",
@@ -57,7 +58,21 @@ export function buildGitTrendPost(
   ].join("\n\n");
 
   const intro = options?.includeIntro ? `${buildGitTrendIntroHtml()}\n` : "";
-  const post = appendChannelHashtag(`${intro}${body}`, hashtagForGitTrendCategory(trend.category));
+  const hashtag = hashtagForGitTrendCategory(trend.category);
+  let post = appendChannelHashtag(`${intro}${body}`, hashtag);
+
+  if (post.length > MAX_POST_LENGTH) {
+    logger.warn(`GitTrend post too long (${post.length}), fitting to ${MAX_POST_LENGTH}`);
+    const trimmedWhy =
+      enriched.futureWhy.length > 200
+        ? enriched.futureWhy.slice(0, Math.max(120, enriched.futureWhy.length - 200)).trimEnd() + "…"
+        : enriched.futureWhy;
+    const shorterBody = body.replace(
+      escapeTelegramHtml(enriched.futureWhy),
+      escapeTelegramHtml(trimmedWhy)
+    );
+    post = appendChannelHashtag(`${intro}${shorterBody}`, hashtag);
+  }
 
   if (post.length > MAX_POST_LENGTH) {
     throw new Error(`GitTrend post too long (${post.length} chars)`);

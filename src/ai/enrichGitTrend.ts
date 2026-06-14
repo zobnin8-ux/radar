@@ -33,14 +33,16 @@ Rules:
 - whyTrending = what happens on GitHub. futureWhy = your interpretation of future significance — mark it as hypothesis in tone, not as fact.
 - radarLevel 1–5: how strong this is as a "future radar" signal (not GitHub popularity).
 - Return publish=false with skipReason if: weak signal, pure hype, duplicate theme, or not relevant to civilizational tech direction.
-- Write in natural Russian.
+- Write in natural Russian. This is a weekly flagship post — write substantially, not telegraphic.
+- futureWhy: 3–5 sentences with context and hypothesis tone
+- whoShouldCare: 2 sentences
 
 Return JSON:
 {
   "radarLevel": 1-5,
   "headline": "compelling Russian headline",
-  "futureWhy": "2-3 sentences — why this might matter for the future (interpretation)",
-  "whoShouldCare": "1 sentence — who should watch this",
+  "futureWhy": "3-5 sentences — why this might matter for the future (interpretation)",
+  "whoShouldCare": "2 sentences — who should watch this and why",
   "watchSignals": ["concrete signal to watch", "..."],
   "publish": true/false,
   "skipReason": null or "reason if publish=false"

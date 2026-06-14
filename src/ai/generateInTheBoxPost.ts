@@ -17,7 +17,8 @@ const openai = new OpenAI({
   timeout: 60_000,
 });
 
-const MAX_POST_LENGTH = 1020;
+/** Лимит тела поста; публикация — фото + отдельное текстовое сообщение (до 4096 в Telegram). */
+const MAX_POST_LENGTH = 2500;
 const IN_THE_BOX_HASHTAG = hashtagForInTheBox();
 const IN_THE_BOX_BODY_MAX =
   MAX_POST_LENGTH - channelHashtagSuffix(IN_THE_BOX_HASHTAG).length;
@@ -39,7 +40,7 @@ The post must make it obvious WHAT device is being discussed.
 
 Tone: smart, concise, natural Russian, no hype, no "революционный смартфон".
 
-Keep each section SHORT (1 short sentence). The final assembled post must stay under 700 characters of body text.
+Write 1–2 sentences per section. The final assembled post must stay under 2200 characters of body text.
 
 Return JSON:
 {

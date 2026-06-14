@@ -49,7 +49,17 @@ Cron RSS **не публикует** в канал — только наполн
 
 **GitHub-сигналы:** GitTrend пушит JSON **суббота 21:00 МСК**. Radar забирает **воскресенье 10:40** локально. Пустой `trends: []` — тихая неделя. `/github force` — повтор.
 
-**Будущее в коробке:** только **физические устройства** с **фото устройства** в посте (`sendPhoto`). Не платформы, не партнёрства, не SaaS. Рубрики **не входят** в дневной лимит.
+**Будущее в коробке:** только **физические устройства** с **фото устройства** в посте. Не платформы, не партнёрства, не SaaS. Рубрики **не входят** в дневной лимит.
+
+### Лимиты длины еженедельных рубрик (Telegram)
+
+| Рубрика | Как уходит в канал | Лимит генерации | Лимит Telegram |
+|---|---|---|---|
+| 🧭 Направление недели | `sendMessage` (текст) | цель **2500–3500** симв., макс. **4096** | **4096** |
+| 🔮 GitHub-сигналы | `sendMessage` (HTML) | макс. **4096** (с анонсом в 1-м посте) | **4096** |
+| 📦 Будущее в коробке | **фото** + **отдельное** текстовое сообщение | **2500** симв. | текст до **4096** (подпись к фото — только 1024, поэтому split) |
+
+Текстовые рубрики больше **не режутся на 1024** — это был баг лимита подписи к фото в `sendPost.ts`.
 
 ## Иерархия источников
 
@@ -89,8 +99,8 @@ TechCrunch, The Verge, Ars Technica, MIT Technology Review, IEEE Spectrum, New A
 2. Fallback картинки (`articleImage.ts`) — og:image, twitter:image, JSON-LD, если в RSS нет фото
 3. AI batch (`analyzeGadget.ts`) — главный gate: `boxCandidate`; пост генерируется с автоподстановкой полей
 4. Vision (`verifyDeviceImage.ts`) перед публикацией
-5. Пост (`generateInTheBoxPost.ts`) — обрезка до лимита Telegram; перебор кандидатов, если первый не собрался
-6. Публикация: **фото устройства + подпись** (`sendPhoto`)
+5. Пост (`generateInTheBoxPost.ts`) — до **2500** символов; перебор кандидатов, если первый не собрался
+6. Публикация: **фото устройства** + **полный текст отдельным сообщением** (`splitPhotoAndText` в `sendPost.ts`) — обход лимита подписи 1024
 
 **Стратегический запас** (`data/in-the-box-reserve.json`):
 
@@ -174,7 +184,7 @@ DRY_RUN=false
 | `/pause` / `/resume` | Пауза cron |
 | `/today` | Посты за сегодня |
 | `/panel` | Адрес панели |
-| `/trends` | Направление недели |
+| `/trends` | Направление недели (развёрнутая сводка 3 направлений) |
 | `/github` | GitHub-сигналы; `/github force` — повтор недели |
 | `/box` | Будущее в коробке → **канал** (live RSS → запас) |
 | `/boxstats` | Статистика последних прогонов `/box` |
@@ -196,7 +206,7 @@ npx tsx scripts/preview-gittrend-admin.ts
 
 ## Типичная неделя
 
-1. Пн–вс: RSS каждые 6 ч → очередь; публикация каждые 30 мин по графику
+1. Пн–вс: RSS каждые 6 ч → очередь; публикация каждые 2 ч по графику
 2. **Среда и суббота 10:25:** «Будущее в коробке»
 3. **Воскресенье 10:40:** GitHub-сигналы; **11:20** — «Направление недели»
 4. Вручную: `/run`, `/inject`, `/box`, `/github`
@@ -210,7 +220,7 @@ src/
   ai/             analyzeNews, generateTelegramPost, analyzeGadget,
                   verifyDeviceImage, enrichGitTrend, generateObserverComment
   rss/            fetchNews, inTheBoxSources
-  telegram/       канал + admin-команды
+  telegram/       канал + admin-команды (sendPost: 4096 текст, split фото/текст)
   dashboard/      веб-панель
   storage/        news, published, observations, gittrend, inTheBox, inTheBoxReserve, settings
   utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport, channelHashtag, cronSchedule
