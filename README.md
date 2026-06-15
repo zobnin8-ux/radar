@@ -157,7 +157,15 @@ npm run build
 npm start
 ```
 
-При `npm start` (если не на паузе) бот **сразу** запускает пайплайн и может опубликовать до **3** постов в канал. Чтобы стартовать без залпа: `"paused": true` в `settings.json` → `npm start` → `/resume` в личку боту.
+**Windows (рекомендуется):** один раз создать ярлык в папке проекта:
+
+```bash
+npm run launcher:shortcut
+```
+
+Двойной клик по **`Radar Future.lnk`** в корне `D:\radar` — бот стартует **без окна терминала**, без залпа в канал, логи в `data/launch.log` и `data/server.log`.
+
+При `npm start` (если не на паузе) бот **сразу** запускает пайплайн и может опубликовать до **3** постов в канал. Чтобы стартовать без залпа: `"paused": true` в `settings.json` → `npm start` → `/resume`, либо ярлык launcher.
 
 ## Настройка Telegram
 
@@ -257,6 +265,11 @@ src/
   utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport, channelHashtag, cronSchedule
 scripts/
   preview-gittrend-admin.ts   превью GitTrend в личку
+launcher/
+  Radar.vbs                   скрытый старт
+  create-shortcut.ps1         Radar Future.lnk в корне
+  launch.cjs                  опционально → Radar.exe (pkg)
+launch-radar.ps1              логика запуска (build, hidden npm start)
 data/
   news.json                   очередь
   observations.json           уровень 1
@@ -280,7 +293,9 @@ RADAR-SCHEDULE-UPDATE.md      расписание GitTrend ↔ Radar
 | `npm run dry` | `DRY_RUN=true` |
 | `npm run observer:queue` | Наблюдатель для очереди |
 | `npm run test:ru-sources` | Отчёт RU RSS в Telegram |
-| `npm run desktop` | Ярлык на рабочем столе |
+| `npm run launcher:shortcut` | Ярлык `Radar Future.lnk` в корне проекта |
+| `npm run launcher:setup` | То же (shortcut) |
+| `npm run desktop` | Алиас → `launcher:shortcut` |
 
 ## Ограничения домашней версии
 

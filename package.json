@@ -18,7 +18,10 @@
     "dashboard:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dashboard-phone-check.ps1",
     "dry": "cross-env DRY_RUN=true tsx src/index.ts",
     "covers": "tsx src/visual/previewCovers.ts",
-    "desktop": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
+    "desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File launcher/create-shortcut.ps1",
+    "launcher:build": "powershell -NoProfile -ExecutionPolicy Bypass -File launcher/build-exe.ps1",
+    "launcher:shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File launcher/create-shortcut.ps1",
+    "launcher:setup": "npm run launcher:shortcut",
     "autostart:remove": "powershell -ExecutionPolicy Bypass -File scripts/uninstall-autostart.ps1"
   },
   "keywords": ["telegram", "rss", "openai", "tech-news"],

@@ -5,6 +5,16 @@ dist/
 data/covers/
 logs/
 
+# Launcher artifacts
+launcher/Radar.exe
+launcher/Radar.ico
+Radar Future.lnk
+data/launch.log
+data/server.log
+data/server.pid
+data/launch.lock
+data/_run-server.cmd
+
 # Runtime data (local bot state)
 data/admin.json
 data/state.json

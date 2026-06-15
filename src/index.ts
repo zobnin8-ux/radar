@@ -26,9 +26,12 @@ async function main(): Promise<void> {
 
   await startScheduler();
 
-  if (!settings.paused) {
+  const skipInitialPipeline = process.env.RADAR_SKIP_INITIAL_PIPELINE === "1";
+  if (!settings.paused && !skipInitialPipeline) {
     logger.info("Running initial pipeline...");
     runPipeline({ trigger: "manual" }).catch((err) => logger.error("Pipeline failed", err));
+  } else if (skipInitialPipeline) {
+    logger.info("Initial pipeline skipped (launcher mode) — cron and /run only");
   } else {
     logger.info("Bot is paused — use /run or /panel in Telegram.");
   }
