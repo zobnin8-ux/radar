@@ -39,8 +39,8 @@ export interface WeeklyRadarWeirdFind {
   repo: string;
   url: string;
   category: string;
-  whatIsIt: string;
-  whyInteresting: string;
+  /** Короткое описание для метаданных (storytelling — в telegramPost). */
+  shortDescription: string;
   stars: number;
   weeklyGrowth: number;
   weirdScore: number;

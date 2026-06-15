@@ -28,8 +28,7 @@ const weirdFindSchema = z.object({
   repo: z.string().min(1),
   url: githubUrlSchema,
   category: z.string().min(1),
-  whatIsIt: z.string().min(1),
-  whyInteresting: z.string().min(1),
+  shortDescription: z.string().min(1),
   stars: z.number().nonnegative(),
   weeklyGrowth: z.number(),
   weirdScore: z.number().nonnegative(),
@@ -44,8 +43,32 @@ export const weeklyRadarReportSchema = z.object({
   weirdFindOfTheWeek: weirdFindSchema.nullable().optional(),
 });
 
+/** Migrate legacy GitTrend fields (whatIsIt / whyInteresting) → shortDescription. */
+function normalizeWeeklyRadarInput(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data;
+
+  const report = { ...(data as Record<string, unknown>) };
+  const weird = report.weirdFindOfTheWeek;
+
+  if (weird && typeof weird === "object" && weird !== null) {
+    const w = { ...(weird as Record<string, unknown>) };
+    if (
+      typeof w.shortDescription !== "string" &&
+      typeof w.whatIsIt === "string" &&
+      w.whatIsIt.trim()
+    ) {
+      w.shortDescription = w.whatIsIt.trim();
+    }
+    delete w.whatIsIt;
+    delete w.whyInteresting;
+    report.weirdFindOfTheWeek = w;
+  }
+
+  return report;
+}
+
 export function validateReport(data: unknown): WeeklyRadarReport {
-  const parsed = weeklyRadarReportSchema.parse(data);
+  const parsed = weeklyRadarReportSchema.parse(normalizeWeeklyRadarInput(data));
   return {
     ...parsed,
     weirdFindOfTheWeek: parsed.weirdFindOfTheWeek ?? null,

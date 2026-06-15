@@ -3,7 +3,7 @@ import { appendChannelHashtag } from "../utils/channelHashtag.js";
 
 const MAX_LENGTH = 4096;
 
-/** Пост для канала — берём telegramPost из GitTrend, добавляем #GitHub. */
+/** Пост для канала — storytelling из GitTrend (`telegramPost`), добавляем #GitHub. */
 export function buildWeirdGitHubPost(find: WeeklyRadarWeirdFind): string {
   let text = find.telegramPost.trim();
   if (!text.includes(find.url)) {

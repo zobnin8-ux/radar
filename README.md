@@ -50,7 +50,28 @@ Cron RSS **не публикует** в канал — только наполн
 
 **GitHub-сигналы:** GitTrend пушит JSON **суббота 21:00 МСК** (GitHub Actions). Radar забирает **воскресенье 10:40** локально. Пустой `trends: []` — тихая неделя. **Анонс рубрики** — только в **самом первом** GitTrend-посте за всё время (пока `data/gittrend.json` → `published` пустой). Повтор недели: `/github force`; переиздание с анонсом — очистить `published` в `gittrend.json`.
 
-**Странный GitHub:** в том же JSON поле `weirdFindOfTheWeek` (готовый `telegramPost` из GitTrend). Radar публикует **воскресенье 19:00** или `/weird`. State: `data/gittrend-weird.json`. Повтор: `/weird force`.
+**Странный GitHub:** в том же JSON поле `weirdFindOfTheWeek`:
+`shortDescription` (метаданные) + готовый **`telegramPost`** (storytelling из GitTrend).
+Radar публикует **воскресенье 19:00** или `/weird`. State: `data/gittrend-weird.json`. Повтор: `/weird force`.
+
+Контракт `weirdFindOfTheWeek`:
+
+```json
+{
+  "title": "…",
+  "repo": "owner/repo",
+  "url": "https://github.com/owner/repo",
+  "category": "…",
+  "shortDescription": "Коротко: что делает репо (40–100 символов).",
+  "stars": 0,
+  "weeklyGrowth": 0,
+  "weirdScore": 0,
+  "telegramTitle": "Странный GitHub недели: …",
+  "telegramPost": "Полная история для Telegram (400–1000 символов)…"
+}
+```
+
+`validateReport` принимает legacy JSON: `whatIsIt` → `shortDescription` (миграция при чтении).
 
 > **Ручной push JSON в GitTrend** (вне субботы) **не меняет расписание** — только содержимое файла на GitHub. Cron GitTrend (сб) и Radar (вс) остаются прежними; автопубликация — только по воскресному cron или командам `/github` / `/weird`.
 
