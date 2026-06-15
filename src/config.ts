@@ -6,6 +6,7 @@ import {
   DEFAULT_WEEKLY_GITTREND_CRON,
   DEFAULT_WEEKLY_IN_THE_BOX_CRON,
   DEFAULT_WEEKLY_TRENDS_CRON,
+  DEFAULT_WEEKLY_WEIRD_GITHUB_CRON,
 } from "./utils/cronSchedule.js";
 
 const envSchema = z.object({
@@ -19,6 +20,7 @@ const envSchema = z.object({
   PUBLISH_INTERVAL_CRON: z.string().default(DEFAULT_PUBLISH_INTERVAL_CRON),
   WEEKLY_TRENDS_CRON: z.string().default(DEFAULT_WEEKLY_TRENDS_CRON),
   WEEKLY_GITTREND_CRON: z.string().default(DEFAULT_WEEKLY_GITTREND_CRON),
+  WEEKLY_WEIRD_GITHUB_CRON: z.string().default(DEFAULT_WEEKLY_WEIRD_GITHUB_CRON),
   WEEKLY_IN_THE_BOX_CRON: z.string().default(DEFAULT_WEEKLY_IN_THE_BOX_CRON),
   GITTREND_RADAR_URL: z
     .string()

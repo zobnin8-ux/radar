@@ -42,12 +42,17 @@ Cron RSS **не публикует** в канал — только наполн
 | Когда (локальное время ПК) | Рубрика | Источник |
 |---|---|---|
 | **Среда и суббота** 10:25 | 📦 **Будущее в коробке** | Отдельные RSS о гаджетах |
-| **Воскресенье** 11:20 | 🧭 **Направление недели** | Сигналы RSS за 7 дней |
 | **Воскресенье** 10:40 | 🔮 **GitHub-сигналы** | [GitTrend](https://github.com/zobnin8-ux/gitrend) |
+| **Воскресенье** 11:20 | 🧭 **Направление недели** | Сигналы RSS за 7 дней |
+| **Воскресенье** 19:00 | 🧩 **Странный GitHub недели** | GitTrend `weirdFindOfTheWeek` |
 
 > `node-cron` — **локальное время Windows**. Задачи на **разных минутах** (`:05` publish, `:15` RSS, рубрики `:25`/`:40`/`:20`), чтобы не блокировать друг друга.
 
-**GitHub-сигналы:** GitTrend пушит JSON **суббота 21:00 МСК**. Radar забирает **воскресенье 10:40** локально. Пустой `trends: []` — тихая неделя. **Анонс рубрики** — только в **самом первом** GitTrend-посте за всё время (пока `data/gittrend.json` → `published` пустой). Повтор недели: `/github force`; переиздание с анонсом — очистить `published` в `gittrend.json`.
+**GitHub-сигналы:** GitTrend пушит JSON **суббота 21:00 МСК** (GitHub Actions). Radar забирает **воскресенье 10:40** локально. Пустой `trends: []` — тихая неделя. **Анонс рубрики** — только в **самом первом** GitTrend-посте за всё время (пока `data/gittrend.json` → `published` пустой). Повтор недели: `/github force`; переиздание с анонсом — очистить `published` в `gittrend.json`.
+
+**Странный GitHub:** в том же JSON поле `weirdFindOfTheWeek` (готовый `telegramPost` из GitTrend). Radar публикует **воскресенье 19:00** или `/weird`. State: `data/gittrend-weird.json`. Повтор: `/weird force`.
+
+> **Ручной push JSON в GitTrend** (вне субботы) **не меняет расписание** — только содержимое файла на GitHub. Cron GitTrend (сб) и Radar (вс) остаются прежними; автопубликация — только по воскресному cron или командам `/github` / `/weird`.
 
 **Направление недели:** 3 направления из RSS за 7 дней. HTML-пост: жирные заголовки, **Горизонт:** у каждого тренда, разделители `━━━━━━━━━━━━━━━━`, хэштег `#Science`. Не входит в дневной лимит.
 
@@ -59,6 +64,7 @@ Cron RSS **не публикует** в канал — только наполн
 |---|---|---|---|
 | 🧭 Направление недели | `sendMessage` (HTML) | цель **1500–2000** симв., макс. **4096** | **4096** |
 | 🔮 GitHub-сигналы | `sendMessage` (HTML) | макс. **4096** (с анонсом в 1-м посте) | **4096** |
+| 🧩 Странный GitHub | `sendMessage` (текст из GitTrend) | готовый `telegramPost` | **4096** |
 | 📦 Будущее в коробке | **фото** + **отдельное** текстовое сообщение | **2500** симв. | текст до **4096** (подпись к фото — только 1024, поэтому split) |
 
 Текстовые рубрики больше **не режутся на 1024** — это был баг лимита подписи к фото в `sendPost.ts`.
@@ -168,6 +174,7 @@ npm run launcher:shortcut
 - старт **без окна терминала** (`Radar.vbs` → `launch-radar.ps1 -Silent`)
 - **без залпа в канал** (`RADAR_SKIP_INITIAL_PIPELINE`)
 - логи: `data/launch.log`, `data/server.log`
+- остановка: **`/stop`** в Telegram (как Ctrl+C в терминале)
 
 Опционально: `npm run launcher:build` → `launcher/Radar.exe` (pkg, без Node в PATH).
 
@@ -192,6 +199,7 @@ POST_INTERVAL_CRON=15 */6 * * *
 PUBLISH_INTERVAL_CRON=5 */2 * * *
 WEEKLY_TRENDS_CRON=20 11 * * 0
 WEEKLY_GITTREND_CRON=40 10 * * 0
+WEEKLY_WEIRD_GITHUB_CRON=0 19 * * 0
 WEEKLY_IN_THE_BOX_CRON=25 10 * * 3,6
 GITTREND_RADAR_URL=https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/reports/weekly-radar.json
 GITTREND_MAX_POSTS=3
@@ -226,11 +234,13 @@ DRY_RUN=false
 | `/run` | Пайплайн + публикация |
 | `/dry` | Тест без канала |
 | `/inject 5` | Инъекция из очереди (до 10) |
-| `/pause` / `/resume` | Пауза cron |
+| `/pause` / `/resume` | Пауза cron (процесс живёт) |
+| `/stop` | Полная остановка бота (для ярлыка без терминала) |
 | `/today` | Посты за сегодня |
 | `/panel` | Адрес панели |
 | `/trends` | Направление недели (развёрнутая сводка 3 направлений) |
 | `/github` | GitHub-сигналы; `/github force` — повтор недели (без анонса, если уже есть записи в `gittrend.json`) |
+| `/weird` | Странный GitHub недели; `/weird force` — повтор |
 | `/box` | Будущее в коробке → **канал** (live RSS → запас) |
 | `/boxstats` | Статистика последних прогонов `/box` |
 | `/boxreserve` | Запас рубрики (до 3 постов) |
@@ -253,21 +263,22 @@ npx tsx scripts/preview-gittrend-admin.ts
 
 1. Пн–вс: RSS каждые 6 ч → очередь; публикация каждые 2 ч по графику
 2. **Среда и суббота 10:25:** «Будущее в коробке»
-3. **Воскресенье 10:40:** GitHub-сигналы; **11:20** — «Направление недели»
-4. Вручную: `/run`, `/inject`, `/box`, `/github`
+3. **Суббота 21:00 МСК:** GitTrend пушит `weekly-radar.json`
+4. **Воскресенье 10:40:** GitHub-сигналы; **11:20** — «Направление недели»; **19:00** — странный GitHub
+5. Вручную: `/run`, `/inject`, `/box`, `/github`, `/weird`; остановка: `/stop`
 
 ## Структура проекта
 
 ```text
 src/
   pipeline/       runPipeline, runPublishTick, scheduler, рубрики
-  gittrend/       fetch/validate/select GitTrend JSON
+  gittrend/       fetch/validate/select GitTrend JSON, buildWeirdGitHubPost
   ai/             analyzeNews, generateTelegramPost, analyzeGadget,
                   verifyDeviceImage, enrichGitTrend, generateObserverComment
   rss/            fetchNews, inTheBoxSources
   telegram/       канал + admin-команды (sendPost: 4096 текст, split фото/текст)
   dashboard/      веб-панель
-  storage/        news, published, observations, gittrend, inTheBox, inTheBoxReserve, settings
+  storage/        news, published, observations, gittrend, gittrend-weird, inTheBox, inTheBoxReserve, settings
   utils/          queueScore, evenPublish, gadgetPrefilter, deviceImage, articleImage, boxRunReport, channelHashtag, cronSchedule
 scripts/
   preview-gittrend-admin.ts   превью GitTrend в личку
@@ -280,7 +291,8 @@ data/
   news.json                   очередь
   observations.json           уровень 1
   published.json              история канала
-  gittrend.json               state GitHub-рубрики
+  gittrend.json               state GitHub-трендов
+  gittrend-weird.json         state «Странный GitHub недели»
   in-the-box.json             опубликованные гаджеты
   in-the-box-rejections.json  архив отклонённых кандидатов
   in-the-box-reserve.json     запас готовых постов (макс. 3, 7 дней)

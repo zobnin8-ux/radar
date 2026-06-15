@@ -27,6 +27,7 @@ import { logger } from "../utils/logger.js";
 
 const sessions = new Set<string>();
 const PUBLIC_DIR = join(process.cwd(), "public");
+let dashboardServer: import("node:http").Server | null = null;
 
 function json(res: import("node:http").ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -216,6 +217,20 @@ async function handleApi(
   json(res, 404, { error: "Not found" });
 }
 
+export function stopDashboard(): Promise<void> {
+  const server = dashboardServer;
+  if (!server) {
+    return Promise.resolve();
+  }
+  dashboardServer = null;
+  return new Promise((resolve) => {
+    server.close(() => {
+      logger.info("Dashboard stopped");
+      resolve();
+    });
+  });
+}
+
 export function startDashboard(): void {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
@@ -250,6 +265,7 @@ export function startDashboard(): void {
     }
   });
 
+  dashboardServer = server;
   server.listen(config.DASHBOARD_PORT, config.DASHBOARD_HOST, () => {
     logger.info(`Dashboard on ${getPcDashboardUrl()}`);
   });

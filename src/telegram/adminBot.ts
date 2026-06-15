@@ -10,6 +10,7 @@ import { getRecentInTheBoxRunStats } from "../storage/inTheBoxStore.js";
 import { formatInTheBoxReserveStatus } from "../storage/inTheBoxReserveStore.js";
 import { formatBoxStatsHistory } from "../utils/boxRunReport.js";
 import { isGitTrendRunning, runWeeklyGitTrend } from "../pipeline/runWeeklyGitTrend.js";
+import { isWeirdGitHubRunning, runWeeklyWeirdGitHub } from "../pipeline/runWeeklyWeirdGitHub.js";
 import { isTrendsRunning, runWeeklyTrends } from "../pipeline/runWeeklyTrends.js";
 import { getAdminChatId, isAdminUser, loadAdmin, saveAdmin } from "../storage/adminStore.js";
 import {
@@ -28,6 +29,7 @@ import { cronToLabel } from "../utils/schedule.js";
 import { postsDueByNow } from "../utils/evenPublish.js";
 import { isSameCalendarDay } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
+import { requestShutdown } from "../utils/shutdown.js";
 import { sleep } from "../utils/sleep.js";
 import { getUpdates, sendTelegramMessage } from "./botApi.js";
 
@@ -40,10 +42,12 @@ const HELP_TEXT = `📡 Радар будущего — команды
 /rutest — проверка RU-источников (4 шт., RSS, без AI)
 /pause — пауза
 /resume — возобновить
+/stop — остановить бот (как Ctrl+C в терминале)
 /today — что вышло
 /panel — адрес панели
 /trends — направление недели (RSS)
 /github — GitHub-тренды (GitTrend)
+/weird — странный GitHub недели (GitTrend weirdFindOfTheWeek)
 /box — будущее в коробке (гаджеты, в канал)
 /boxstats — статистика прогонов /box
 /boxreserve — запас рубрики (до 3, читает /box и cron)
@@ -237,6 +241,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
     case "/github": {
       if (
         isGitTrendRunning() ||
+        isWeirdGitHubRunning() ||
         isAnyTaskRunning() ||
         isInTheBoxRunning() ||
         isTrendsRunning()
@@ -256,6 +261,29 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
     }
 
+    case "/weird": {
+      if (
+        isWeirdGitHubRunning() ||
+        isGitTrendRunning() ||
+        isAnyTaskRunning() ||
+        isInTheBoxRunning() ||
+        isTrendsRunning()
+      ) {
+        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
+        return;
+      }
+      const force = parts[1] === "force";
+      await sendTelegramMessage(
+        chatId,
+        force
+          ? "🧩 Странный GitHub: принудительный запуск..."
+          : "🧩 Публикую «Странный GitHub недели»..."
+      );
+      const result = await runWeeklyWeirdGitHub({ force });
+      await sendTelegramMessage(chatId, result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+      break;
+    }
+
     case "/pause": {
       await updateSettings({ paused: true });
       await sendTelegramMessage(chatId, "⏸ Пауза. /run по-прежнему работает.");
@@ -265,6 +293,16 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
     case "/resume": {
       await updateSettings({ paused: false });
       await sendTelegramMessage(chatId, "▶️ Возобновлено.");
+      break;
+    }
+
+    case "/stop": {
+      await sendTelegramMessage(
+        chatId,
+        "🛑 Останавливаю бот.\n\nЗапуск снова: ярлык Radar Future или npm start в папке проекта."
+      );
+      await sleep(400);
+      await requestShutdown();
       break;
     }
 

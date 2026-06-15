@@ -34,10 +34,25 @@ export interface WeeklyRadarTrend {
   repos: WeeklyRadarRepo[];
 }
 
+export interface WeeklyRadarWeirdFind {
+  title: string;
+  repo: string;
+  url: string;
+  category: string;
+  whatIsIt: string;
+  whyInteresting: string;
+  stars: number;
+  weeklyGrowth: number;
+  weirdScore: number;
+  telegramTitle: string;
+  telegramPost: string;
+}
+
 export interface WeeklyRadarReport {
   week: string;
   generatedAt: string;
   trends: WeeklyRadarTrend[];
+  weirdFindOfTheWeek?: WeeklyRadarWeirdFind | null;
 }
 
 export function trendIdKey(week: string, trend: WeeklyRadarTrend): string {

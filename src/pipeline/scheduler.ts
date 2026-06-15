@@ -8,12 +8,14 @@ import { runPipeline } from "./runPipeline.js";
 import { runPublishTick } from "./runPublishTick.js";
 import { isInTheBoxRunning, runWeeklyInTheBox } from "./runWeeklyInTheBox.js";
 import { isGitTrendRunning, runWeeklyGitTrend } from "./runWeeklyGitTrend.js";
+import { isWeirdGitHubRunning, runWeeklyWeirdGitHub } from "./runWeeklyWeirdGitHub.js";
 import { isTrendsRunning, runWeeklyTrends } from "./runWeeklyTrends.js";
 
 let scheduledTask: cron.ScheduledTask | null = null;
 let publishTask: cron.ScheduledTask | null = null;
 let trendsTask: cron.ScheduledTask | null = null;
 let gitTrendTask: cron.ScheduledTask | null = null;
+let weirdGitHubTask: cron.ScheduledTask | null = null;
 let inTheBoxTask: cron.ScheduledTask | null = null;
 
 export async function startScheduler(): Promise<void> {
@@ -21,20 +23,32 @@ export async function startScheduler(): Promise<void> {
   startWeeklyInTheBoxScheduler();
   startWeeklyTrendsScheduler();
   startWeeklyGitTrendScheduler();
+  startWeeklyWeirdGitHubScheduler();
   logger.info(`Cron grid (local): ${CRON_SCHEDULE_SUMMARY}`);
+}
+
+function stopCronTask(task: cron.ScheduledTask | null): null {
+  if (task) {
+    task.stop();
+  }
+  return null;
+}
+
+export function stopScheduler(): void {
+  scheduledTask = stopCronTask(scheduledTask);
+  publishTask = stopCronTask(publishTask);
+  trendsTask = stopCronTask(trendsTask);
+  gitTrendTask = stopCronTask(gitTrendTask);
+  weirdGitHubTask = stopCronTask(weirdGitHubTask);
+  inTheBoxTask = stopCronTask(inTheBoxTask);
+  logger.info("Schedulers stopped");
 }
 
 export async function reschedule(): Promise<void> {
   const settings = await loadSettings();
 
-  if (scheduledTask) {
-    scheduledTask.stop();
-    scheduledTask = null;
-  }
-  if (publishTask) {
-    publishTask.stop();
-    publishTask = null;
-  }
+  scheduledTask = stopCronTask(scheduledTask);
+  publishTask = stopCronTask(publishTask);
 
   if (!cron.validate(settings.postIntervalCron)) {
     logger.error(`Invalid RSS cron expression: ${settings.postIntervalCron}`);
@@ -102,7 +116,8 @@ function startWeeklyInTheBoxScheduler(): void {
       isAnyTaskRunning() ||
       isInTheBoxRunning() ||
       isTrendsRunning() ||
-      isGitTrendRunning()
+      isGitTrendRunning() ||
+      isWeirdGitHubRunning()
     ) {
       logger.info("In-the-box rubric skipped — another task running");
       return;
@@ -130,7 +145,8 @@ function startWeeklyTrendsScheduler(): void {
       isAnyTaskRunning() ||
       isTrendsRunning() ||
       isInTheBoxRunning() ||
-      isGitTrendRunning()
+      isGitTrendRunning() ||
+      isWeirdGitHubRunning()
     ) {
       logger.info("Weekly trends skipped — another task running");
       return;
@@ -158,7 +174,8 @@ function startWeeklyGitTrendScheduler(): void {
       isAnyTaskRunning() ||
       isGitTrendRunning() ||
       isTrendsRunning() ||
-      isInTheBoxRunning()
+      isInTheBoxRunning() ||
+      isWeirdGitHubRunning()
     ) {
       logger.info("GitTrend rubric skipped — another task running");
       return;
@@ -167,4 +184,33 @@ function startWeeklyGitTrendScheduler(): void {
   });
 
   logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:40 local, after Sat 21:00 MSK JSON)`);
+}
+
+function startWeeklyWeirdGitHubScheduler(): void {
+  const cronExpr = config.WEEKLY_WEIRD_GITHUB_CRON;
+  if (!cron.validate(cronExpr)) {
+    logger.error(`Invalid Weird GitHub cron: ${cronExpr}`);
+    return;
+  }
+
+  weirdGitHubTask = cron.schedule(cronExpr, async () => {
+    const current = await loadSettings();
+    if (current.paused) {
+      logger.info("Weird GitHub rubric skipped — bot is paused");
+      return;
+    }
+    if (
+      isAnyTaskRunning() ||
+      isWeirdGitHubRunning() ||
+      isGitTrendRunning() ||
+      isTrendsRunning() ||
+      isInTheBoxRunning()
+    ) {
+      logger.info("Weird GitHub rubric skipped — another task running");
+      return;
+    }
+    await runWeeklyWeirdGitHub();
+  });
+
+  logger.info(`Weird GitHub scheduler: ${cronExpr} (Sunday evening, GitTrend weirdFindOfTheWeek)`);
 }

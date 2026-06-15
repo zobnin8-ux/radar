@@ -23,6 +23,7 @@ data/published.json
 data/observations.json
 data/trends.json
 data/gittrend.json
+data/gittrend-weird.json
 data/in-the-box.json
 data/in-the-box-rejections.json
 data/in-the-box-reserve.json

@@ -1,10 +1,16 @@
-import { startDashboard } from "./dashboard/server.js";
-import { reschedule, startScheduler } from "./pipeline/scheduler.js";
+import { startDashboard, stopDashboard } from "./dashboard/server.js";
+import { startScheduler, stopScheduler } from "./pipeline/scheduler.js";
 import { runPipeline } from "./pipeline/runPipeline.js";
 import { assertTelegramConfig, config } from "./config.js";
 import { loadSettings } from "./storage/settingsStore.js";
 import { sendDashboardLinksToAdmin, startAdminBot } from "./telegram/adminBot.js";
 import { logger } from "./utils/logger.js";
+import { onShutdown } from "./utils/shutdown.js";
+
+onShutdown(async () => {
+  stopScheduler();
+  await stopDashboard();
+});
 
 async function main(): Promise<void> {
   assertTelegramConfig();

@@ -123,5 +123,5 @@ export interface PublishedRecord {
   level: MaturityLevel;
   category: Category;
   impactHorizon?: ImpactHorizon;
-  postType?: "article" | "digest" | "trends" | "injection" | "in-the-box" | "github-trends";
+  postType?: "article" | "digest" | "trends" | "injection" | "in-the-box" | "github-trends" | "github-weird";
 }
