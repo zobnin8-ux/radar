@@ -387,7 +387,7 @@ async function deleteWebhook(): Promise<void> {
   const token = config.TELEGRAM_BOT_TOKEN;
   if (!token) return;
   try {
-    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+    await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`, {
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
