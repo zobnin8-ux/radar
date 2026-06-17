@@ -4,6 +4,7 @@ import { runPipeline } from "./pipeline/runPipeline.js";
 import { assertTelegramConfig, config } from "./config.js";
 import { loadSettings } from "./storage/settingsStore.js";
 import { sendDashboardLinksToAdmin, startAdminBot } from "./telegram/adminBot.js";
+import { runWithAdminTelegramProgress } from "./telegram/progressReporter.js";
 import { logger } from "./utils/logger.js";
 import { onShutdown } from "./utils/shutdown.js";
 
@@ -34,10 +35,15 @@ async function main(): Promise<void> {
 
   const skipInitialPipeline = process.env.RADAR_SKIP_INITIAL_PIPELINE === "1";
   if (!settings.paused && !skipInitialPipeline) {
-    logger.info("Running initial pipeline...");
-    runPipeline({ trigger: "manual" }).catch((err) => logger.error("Pipeline failed", err));
+    logger.info("Running initial pipeline with Telegram progress...");
+    void runWithAdminTelegramProgress({
+      task: "pipeline",
+      dryRun: settings.dryRun,
+      title: "🚀 Запуск бота",
+      run: () => runPipeline({ trigger: "manual" }),
+    }).catch((err) => logger.error("Pipeline failed", err));
   } else if (skipInitialPipeline) {
-    logger.info("Initial pipeline skipped (launcher mode) — cron and /run only");
+    logger.info("Initial pipeline skipped (RADAR_SKIP_INITIAL_PIPELINE=1)");
   } else {
     logger.info("Bot is paused — use /run or /panel in Telegram.");
   }

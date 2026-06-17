@@ -40,6 +40,18 @@ import { sleep } from "../utils/sleep.js";
 import { getUpdates, sendTelegramMessage } from "./botApi.js";
 import { runWithTelegramProgress } from "./progressReporter.js";
 
+/** Старые имена с дефисом → слитные (Telegram-стиль). */
+const LEGACY_COMMAND_ALIASES: Record<string, string> = {
+  "/gittrend-ingest": "/gittrendingest",
+  "/queue-prune": "/queueprune",
+  "/source-stats": "/sourcestats",
+  "/observer-queue": "/observerqueue",
+};
+
+function normalizeCommand(cmd: string): string {
+  return LEGACY_COMMAND_ALIASES[cmd] ?? cmd;
+}
+
 /** /inject@BotName 5 → cmd /inject, args [5]; /inject5 → args [5] */
 function parseTelegramCommand(text: string): { cmd: string; args: string[] } {
   const parts = text.trim().split(/\s+/).filter(Boolean);
@@ -54,7 +66,7 @@ function parseTelegramCommand(text: string): { cmd: string; args: string[] } {
     return { cmd: "/inject", args: [gluedInject[1], ...parts.slice(1)] };
   }
 
-  return { cmd: base, args: parts.slice(1) };
+  return { cmd: normalizeCommand(base), args: parts.slice(1) };
 }
 
 const HELP_TEXT = `📡 Радар будущего — команды
@@ -71,15 +83,15 @@ const HELP_TEXT = `📡 Радар будущего — команды
 /panel — адрес панели
 /trends — направление недели (RSS)
 /github — GitHub-тренды (GitTrend)
-/gittrend-ingest — забрать weekly-radar.json сейчас (как в субботу 22:00)
+/gittrendingest — забрать weekly-radar.json сейчас (как в субботу 22:00)
 /weird — странный GitHub недели (GitTrend weirdFindOfTheWeek)
 /box — будущее в коробке (гаджеты, в канал)
 /boxstats — статистика прогонов /box
 /boxreserve — запас рубрики (до 3, читает /box и cron)
 /queue — очередь публикаций
-/queue-prune — очередь: очистка
-/source-stats — статистика источников
-/observer-queue — наблюдатель для очереди
+/queueprune — очередь: очистка
+/sourcestats — статистика источников
+/observerqueue — наблюдатель для очереди
 
 /help или /commands — показать этот список`;
 
@@ -277,7 +289,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
     }
 
-    case "/gittrend-ingest": {
+    case "/gittrendingest": {
       if (isAnyTaskRunning() || isGitTrendRunning() || isWeirdGitHubRunning()) {
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
@@ -403,15 +415,15 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       await sendTelegramMessage(chatId, await buildQueueStatusMessage());
       break;
 
-    case "/queue-prune":
+    case "/queueprune":
       await sendTelegramMessage(chatId, await buildQueuePruneReport());
       break;
 
-    case "/source-stats":
+    case "/sourcestats":
       await sendTelegramMessage(chatId, await buildSourceStatsMessage());
       break;
 
-    case "/observer-queue": {
+    case "/observerqueue": {
       const force = args[0] === "force";
       await sendTelegramMessage(
         chatId,
@@ -431,7 +443,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
           `Ошибок: ${result.errors}`,
           "",
           "При публикации готовые комментарии подставятся автоматически.",
-          "Повторить всё: /observer-queue force",
+          "Повторить всё: /observerqueue force",
         ].join("\n")
       );
       break;

@@ -296,9 +296,10 @@ DRY_RUN=false
 | `/boxstats` | Статистика последних прогонов `/box` |
 | `/boxreserve` | Запас рубрики (до 3 постов) |
 | `/queue` | Очередь публикаций |
-| `/queue-prune` | Очистка очереди |
-| `/source-stats` | Статистика источников |
-| `/observer-queue` | Наблюдатель 2.0 для очереди |
+| `/queueprune` | Очистка очереди |
+| `/sourcestats` | Статистика источников |
+| `/observerqueue` | Наблюдатель 2.0 для очереди |
+| `/gittrendingest` | Забрать weekly-radar.json с GitHub (как в субботу 22:00) |
 | `/rutest` | Тест RU RSS |
 | `/help`, `/commands` | Список команд |
 

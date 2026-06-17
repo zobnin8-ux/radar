@@ -3,6 +3,7 @@ import { config } from "../config.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import { CRON_SCHEDULE_SUMMARY } from "../utils/cronSchedule.js";
 import { logger } from "../utils/logger.js";
+import { runWithAdminTelegramProgress } from "../telegram/progressReporter.js";
 import { isAnyTaskRunning } from "./activeTask.js";
 import { ingestGitTrendReport } from "./ingestGitTrendReport.js";
 import { runPipeline } from "./runPipeline.js";
@@ -69,7 +70,15 @@ export async function reschedule(): Promise<void> {
       logger.info("RSS scheduler skipped — another task already running");
       return;
     }
-    await runPipeline({ trigger: "cron" });
+    const result = await runWithAdminTelegramProgress({
+      task: "pipeline",
+      dryRun: current.dryRun,
+      title: "🔄 RSS по расписанию",
+      run: () => runPipeline({ trigger: "cron" }),
+    });
+    if (!result.success) {
+      logger.warn(`Scheduled RSS pipeline: ${result.message}`);
+    }
   });
 
   logger.info(

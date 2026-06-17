@@ -237,7 +237,7 @@ try {
     }
 
     "" | Set-Content -Path $serverLog -Encoding UTF8
-    Write-Log "Starting bot on port $port (no initial channel publish)..."
+    Write-Log "Starting bot on port $port (startup pipeline + Telegram progress)..."
 
     $startBat = Join-Path $dataDir "_run-server.cmd"
     $npmCmdEsc = $npmCmd -replace '"', '""'
@@ -245,7 +245,6 @@ try {
 @echo off
 cd /d "$projectDir"
 set "PATH=$nodeDir;$npmDir;%PATH%"
-set "RADAR_SKIP_INITIAL_PIPELINE=1"
 "$npmCmdEsc" start >> "$serverLog" 2>&1
 "@ | Set-Content -Path $startBat -Encoding ASCII
 

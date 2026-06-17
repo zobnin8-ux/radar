@@ -1,3 +1,5 @@
+import { getAdminChatId } from "../storage/adminStore.js";
+import { logger } from "../utils/logger.js";
 import {
   bindProgress,
   formatTelegramProgress,
@@ -11,7 +13,25 @@ import { editTelegramMessage, sendTelegramMessage, sendTelegramMessageId } from 
 
 const POLL_INTERVAL_MS = 5000;
 
-export async function runWithTelegramProgress<T extends { success: boolean; message: string; publishedCount?: number }>(
+export type ProgressRunResult = { success: boolean; message: string; publishedCount?: number };
+
+export async function runWithAdminTelegramProgress<T extends ProgressRunResult>(
+  options: {
+    task: ProgressTask;
+    dryRun: boolean;
+    title: string;
+    run: () => Promise<T>;
+  }
+): Promise<T> {
+  const chatId = await getAdminChatId();
+  if (!chatId) {
+    logger.warn("Telegram progress skipped — admin chat unknown (send /start to bot)");
+    return options.run();
+  }
+  return runWithTelegramProgress(chatId, options);
+}
+
+export async function runWithTelegramProgress<T extends ProgressRunResult>(
   chatId: number,
   options: {
     task: ProgressTask;
