@@ -17,12 +17,17 @@ export type PublishPostType = "article" | "injection";
 
 export async function publishPosts(
   candidates: AnalyzedNews[],
-  options: { dryRun?: boolean; postType: PublishPostType }
+  options: {
+    dryRun?: boolean;
+    postType: PublishPostType;
+    onProgress?: (current: number, total: number, title: string) => void;
+  }
 ): Promise<number> {
   let publishedCount = 0;
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
+    options.onProgress?.(i + 1, candidates.length, candidate.news.title);
 
     const policy = checkContentPolicy(candidate.news);
     if (!policy.allowedForRadar) {

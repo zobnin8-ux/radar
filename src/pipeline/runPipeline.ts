@@ -34,6 +34,7 @@ import { filterByContentPolicy } from "../filters/contentPolicy.js";
 import { prefilterNews } from "../utils/prefilter.js";
 import { isWithinLast24Hours } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
+import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
 import { endTask, isInjectionRunning, tryBeginTask } from "./activeTask.js";
 import { publishFromQueue } from "./publishFromQueue.js";
 import { publishPosts } from "./publishPosts.js";
@@ -86,8 +87,11 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
   let observationsSaved = 0;
   let queuedNew = 0;
 
+  const progress = getActiveProgress() ?? bindProgress("pipeline", dryRun);
+
   try {
     logger.info(`Starting pipeline (${options.trigger}, dryRun=${dryRun}, collectOnly=${collectOnly})...`);
+    await updateProgress("queue", { detail: "Подготовка…" });
 
     const enabledSources = getEnabledSources(settings);
     await pruneRssErrors(enabledSources.map((s) => s.name));
@@ -147,7 +151,17 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
         `Daily publish limit reached (${postsToday}/${settings.maxPostsPerDay}), will still check sources and save observations`
       );
     } else if (!collectOnly && queueBefore.length > 0) {
-      const fromQueueResult = await publishFromQueue({ limit: postsThisRun, dryRun });
+      await updateProgress("queue", {
+        current: 0,
+        total: postsThisRun,
+        detail: `${queueBefore.length} в очереди`,
+      });
+      const fromQueueResult = await publishFromQueue({
+        limit: postsThisRun,
+        dryRun,
+        onProgress: (current, total, title) =>
+          void updateProgress("queue", { current, total, detail: title.slice(0, 80) }),
+      });
       publishedCount += fromQueueResult.publishedCount;
     } else if (collectOnly && queueBefore.length > 0) {
       logger.info(`Collect-only: ${queueBefore.length} item(s) waiting in queue`);
@@ -156,8 +170,13 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
     let slotsLeft = collectOnly ? 0 : Math.max(0, postsThisRun - publishedCount);
     const sources = getEnabledSources(settings);
 
-    const allNews = await fetchAllNews(sources);
+    await updateProgress("rss", { current: 0, total: sources.length, detail: "Загрузка…" });
+    const allNews = await fetchAllNews(sources, (current, total, sourceName) =>
+      void updateProgress("rss", { current, total, detail: sourceName })
+    );
     logger.info(`Total fetched: ${allNews.length} items`);
+
+    await updateProgress("filter", { detail: `${allNews.length} из RSS` });
 
     const freshNews = allNews.filter((item) => isWithinLast24Hours(item.publishedAt));
     logger.info(`Fresh (last 24h): ${freshNews.length} items`);
@@ -182,6 +201,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
             ? `No new RSS items, ${queueAfter} in publish queue`
             : "No new candidates to analyze";
       logger.info(message);
+      await progress.done({ published: publishedCount, detail: message });
       await recordLastRun({
         trigger: options.trigger,
         success: true,
@@ -224,6 +244,12 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       }
     }
 
+    await updateProgress("filter", {
+      current: toAnalyze.length,
+      total: unknown.length,
+      detail: `${toAnalyze.length} на AI`,
+    });
+
     if (toAnalyze.length === 0) {
       const queueAfter = await countPublishQueue();
       const message =
@@ -231,6 +257,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
           ? `Pre-filter rejected ${prefiltered.length} item(s), nothing left for AI`
           : "No suitable news found for publication";
       logger.info(message);
+      await progress.done({ published: publishedCount, detail: message });
       await recordLastRun({
         trigger: options.trigger,
         success: true,
@@ -240,7 +267,11 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       return { success: true, publishedCount, observationsSaved, message };
     }
 
-    const { publishable, observations } = await analyzeForPipeline(toAnalyze);
+    const analyzeTotal = Math.ceil(Math.min(toAnalyze.length, 60) / 20);
+    await updateProgress("analyze", { current: 0, total: analyzeTotal, detail: "OpenAI…" });
+    const { publishable, observations } = await analyzeForPipeline(toAnalyze, (current, total) =>
+      void updateProgress("analyze", { current, total, detail: `пакет ${current}/${total}` })
+    );
 
     for (const obs of observations) {
       if (!dryRun) {
@@ -326,9 +357,21 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
     const toPublish = newCap.items;
     queuedNew = Math.max(0, queueEligible.length - toPublish.length);
 
+    await updateProgress("select", {
+      current: toPublish.length,
+      total: queueEligible.length,
+      detail: `${toPublish.length} к публикации`,
+    });
+
     if (!collectOnly && toPublish.length > 0) {
       logger.info(`Selected ${toPublish.length} new item(s) for publication`);
-      publishedCount += await publishPosts(toPublish, { dryRun, postType: "article" });
+      await updateProgress("publish", { current: 0, total: toPublish.length, detail: "Генерация постов…" });
+      publishedCount += await publishPosts(toPublish, {
+        dryRun,
+        postType: "article",
+        onProgress: (current, total, title) =>
+          void updateProgress("publish", { current, total, detail: title.slice(0, 80) }),
+      });
       slotsLeft = Math.max(0, slotsLeft - toPublish.length);
     } else if (queueEligible.length > 0) {
       logger.info(`Queued ${queueEligible.length} eligible item(s) for later`);
@@ -344,6 +387,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
           : "No suitable news found for publication";
 
     logger.info(`Pipeline completed: ${message}`);
+    await progress.done({ published: publishedCount, detail: message });
     await recordLastRun({
       trigger: options.trigger,
       success: true,
@@ -355,6 +399,7 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.error("Pipeline failed", error);
+    await progress.error(errMsg);
     await recordLastRun({
       trigger: options.trigger,
       success: false,

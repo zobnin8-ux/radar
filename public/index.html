@@ -90,6 +90,22 @@
       transition: width 0.4s;
     }
 
+    .pipeline-stages {
+      margin-top: 12px;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.78rem;
+      line-height: 1.55;
+    }
+    .stage-line {
+      color: var(--muted);
+      padding: 2px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stage-line.active { color: var(--accent); font-weight: 600; }
+    .stage-line.done { color: var(--green); }
+
     /* Big action button */
     .btn-big {
       width: 100%;
@@ -371,6 +387,8 @@
       <p class="hint" style="text-align:center;margin-top:8px" id="action-hint">
         Инъекция — очередь с разнообразием источников, вне лимита 15/день
       </p>
+
+      <div class="pipeline-stages hidden" id="pipeline-stages"></div>
     </div>
 
     <div class="card">
@@ -566,6 +584,7 @@ const TOKEN_KEY = 'radar_token';
 let token = localStorage.getItem(TOKEN_KEY);
 let settings = null;
 let statusData = null;
+let progressPollId = null;
 
 function showToast(msg, duration = 3500) {
   const t = document.getElementById('toast');
@@ -642,35 +661,95 @@ function setBtnLoading(id, loading, defaultHtml) {
   }
 }
 
+function renderPipelineStages(phases) {
+  const el = document.getElementById('pipeline-stages');
+  if (!phases?.length) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  el.innerHTML = phases.map((p) => {
+    const prefix = p.state === 'done' ? '✅' : p.state === 'active' ? '▶️' : '░░';
+    const suffix = p.suffix ? ` ${esc(p.suffix)}` : '';
+    return `<div class="stage-line ${p.state}">${prefix} ${esc(p.bar)}  ${esc(p.label)}${suffix}</div>`;
+  }).join('');
+}
+
+async function refreshProgress() {
+  try {
+    const p = await api('/api/progress');
+    if (p.status === 'running') {
+      renderPipelineStages(p.phases);
+    } else {
+      renderPipelineStages(null);
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+function startProgressPoll() {
+  stopProgressPoll();
+  refreshProgress();
+  progressPollId = setInterval(refreshProgress, 2000);
+}
+
+function stopProgressPoll() {
+  if (progressPollId) {
+    clearInterval(progressPollId);
+    progressPollId = null;
+  }
+}
+
 async function refresh() {
   try {
-    const s = await api('/api/status');
+    const [s, p] = await Promise.all([
+      api('/api/status'),
+      api('/api/progress').catch(() => null),
+    ]);
     statusData = s;
+    const progRunning = p?.status === 'running';
 
     const heroIcon = document.getElementById('hero-icon');
     const heroStatus = document.getElementById('hero-status');
     const heroSub = document.getElementById('hero-sub');
     const pauseBtn = document.getElementById('btn-toggle-pause');
 
-    if (s.pipelineRunning || s.injectionRunning) {
-      heroIcon.textContent = s.injectionRunning ? '⚡' : '🔄';
-      heroStatus.textContent = s.injectionRunning ? 'Инъекция из очереди...' : 'Собираю новости...';
-      heroSub.textContent = s.injectionRunning
-        ? 'Публикуем накопленное вне дневного лимита'
-        : 'Подождите, это может занять 1–3 минуты';
+    const taskHero = {
+      pipeline: { icon: '🔄', status: 'Собираю новости...', sub: 'Этапы ниже обновляются каждые 2 сек' },
+      injection: { icon: '⚡', status: 'Инъекция из очереди...', sub: 'Публикуем вне дневного лимита' },
+      box: { icon: '📦', status: 'Будущее в коробке...', sub: 'RSS → AI → фото → публикация' },
+      trends: { icon: '🧭', status: 'Направление недели...', sub: 'Сигналы → OpenAI → публикация' },
+      github: { icon: '🔮', status: 'GitHub-тренды...', sub: 'GitTrend → AI → публикация' },
+      weird: { icon: '🧩', status: 'Странный GitHub...', sub: 'GitTrend → публикация' },
+    };
+
+    if (progRunning || s.pipelineRunning || s.injectionRunning) {
+      const task = progRunning ? (p.task || 'pipeline') : (s.injectionRunning ? 'injection' : 'pipeline');
+      const hero = taskHero[task] || taskHero.pipeline;
+      heroIcon.textContent = hero.icon;
+      heroStatus.textContent = hero.status;
+      heroSub.textContent = hero.sub;
+      if (progRunning) renderPipelineStages(p.phases);
+      else if (!progressPollId) refreshProgress();
     } else if (s.paused) {
+      if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '⏸';
       heroStatus.textContent = 'На паузе';
       heroSub.textContent = 'Автопубликация остановлена. Можно запустить вручную.';
       pauseBtn.innerHTML = '▶️ Возобновить';
       pauseBtn.className = 'btn-big secondary';
     } else if (s.remainingToday <= 0) {
+      if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '✅';
       heroStatus.textContent = 'Лимит на сегодня';
       heroSub.textContent = `Опубликовано ${s.postsToday} из ${s.maxPostsPerDay}. Завтра продолжим.`;
       pauseBtn.innerHTML = '⏸ Пауза';
       pauseBtn.className = 'btn-big warn';
     } else {
+      if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '📡';
       heroStatus.textContent = 'Всё в порядке';
       heroSub.textContent = `${s.scheduleLabel}. Осталось ${s.remainingToday} постов на сегодня.`;
@@ -768,7 +847,7 @@ async function refresh() {
       errCard.classList.add('hidden');
     }
 
-    const busy = s.pipelineRunning || s.injectionRunning;
+    const busy = progRunning || s.pipelineRunning || s.injectionRunning;
     document.getElementById('btn-run').disabled = busy || s.remainingToday <= 0;
     document.getElementById('btn-dry').disabled = busy;
     document.getElementById('btn-inject-5').disabled = busy;
@@ -780,6 +859,7 @@ async function refresh() {
 async function confirmRun() {
   if (!confirm('Запустить сбор новостей и опубликовать в канал?')) return;
   setBtnLoading('btn-run', true);
+  startProgressPoll();
   try {
     const r = await api('/api/run', { method: 'POST' });
     showToast(r.message || r.error || 'Готово', 5000);
@@ -787,11 +867,14 @@ async function confirmRun() {
   } catch {
     showToast('Ошибка запуска');
   }
+  stopProgressPoll();
+  refreshProgress();
   setBtnLoading('btn-run', false, '🚀 Опубликовать сейчас');
 }
 
 async function confirmDry() {
   setBtnLoading('btn-dry', true);
+  startProgressPoll();
   try {
     const r = await api('/api/dry-run', { method: 'POST' });
     showToast(r.message || r.error || 'Готово — смотрите консоль на ПК', 5000);
@@ -799,6 +882,8 @@ async function confirmDry() {
   } catch {
     showToast('Ошибка');
   }
+  stopProgressPoll();
+  refreshProgress();
   setBtnLoading('btn-dry', false, '🧪 Пробный запуск');
 }
 
@@ -807,6 +892,7 @@ async function confirmInject(count) {
   const btnId = count === 5 ? 'btn-inject-5' : 'btn-inject-6';
   const label = `⚡ Инъекция ${count}`;
   setBtnLoading(btnId, true);
+  startProgressPoll();
   try {
     const r = await api('/api/inject', {
       method: 'POST',
@@ -817,6 +903,8 @@ async function confirmInject(count) {
   } catch {
     showToast('Ошибка инъекции');
   }
+  stopProgressPoll();
+  refreshProgress();
   setBtnLoading(btnId, false, label);
 }
 

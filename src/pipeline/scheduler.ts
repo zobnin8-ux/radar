@@ -4,6 +4,7 @@ import { loadSettings } from "../storage/settingsStore.js";
 import { CRON_SCHEDULE_SUMMARY } from "../utils/cronSchedule.js";
 import { logger } from "../utils/logger.js";
 import { isAnyTaskRunning } from "./activeTask.js";
+import { ingestGitTrendReport } from "./ingestGitTrendReport.js";
 import { runPipeline } from "./runPipeline.js";
 import { runPublishTick } from "./runPublishTick.js";
 import { isInTheBoxRunning, runWeeklyInTheBox } from "./runWeeklyInTheBox.js";
@@ -14,6 +15,7 @@ import { isTrendsRunning, runWeeklyTrends } from "./runWeeklyTrends.js";
 let scheduledTask: cron.ScheduledTask | null = null;
 let publishTask: cron.ScheduledTask | null = null;
 let trendsTask: cron.ScheduledTask | null = null;
+let gitTrendIngestTask: cron.ScheduledTask | null = null;
 let gitTrendTask: cron.ScheduledTask | null = null;
 let weirdGitHubTask: cron.ScheduledTask | null = null;
 let inTheBoxTask: cron.ScheduledTask | null = null;
@@ -22,6 +24,7 @@ export async function startScheduler(): Promise<void> {
   await reschedule();
   startWeeklyInTheBoxScheduler();
   startWeeklyTrendsScheduler();
+  startWeeklyGitTrendIngestScheduler();
   startWeeklyGitTrendScheduler();
   startWeeklyWeirdGitHubScheduler();
   logger.info(`Cron grid (local): ${CRON_SCHEDULE_SUMMARY}`);
@@ -38,6 +41,7 @@ export function stopScheduler(): void {
   scheduledTask = stopCronTask(scheduledTask);
   publishTask = stopCronTask(publishTask);
   trendsTask = stopCronTask(trendsTask);
+  gitTrendIngestTask = stopCronTask(gitTrendIngestTask);
   gitTrendTask = stopCronTask(gitTrendTask);
   weirdGitHubTask = stopCronTask(weirdGitHubTask);
   inTheBoxTask = stopCronTask(inTheBoxTask);
@@ -157,6 +161,34 @@ function startWeeklyTrendsScheduler(): void {
   logger.info(`Weekly trends scheduler: ${cronExpr} (Sunday 11:20 local)`);
 }
 
+function startWeeklyGitTrendIngestScheduler(): void {
+  const cronExpr = config.WEEKLY_GITTREND_INGEST_CRON;
+  if (!cron.validate(cronExpr)) {
+    logger.error(`Invalid GitTrend ingest cron: ${cronExpr}`);
+    return;
+  }
+
+  gitTrendIngestTask = cron.schedule(cronExpr, async () => {
+    const current = await loadSettings();
+    if (current.paused) {
+      logger.info("GitTrend ingest skipped — bot is paused");
+      return;
+    }
+    if (isAnyTaskRunning() || isGitTrendRunning() || isWeirdGitHubRunning()) {
+      logger.info("GitTrend ingest skipped — another task running");
+      return;
+    }
+    const result = await ingestGitTrendReport();
+    if (result.success) {
+      logger.info(`GitTrend ingest: ${result.message}${result.notified ? " (notified)" : ""}`);
+    } else {
+      logger.warn(`GitTrend ingest failed: ${result.message}`);
+    }
+  });
+
+  logger.info(`GitTrend ingest scheduler: ${cronExpr} (Saturday 22:00 local, after GitRend 21:00 MSK)`);
+}
+
 function startWeeklyGitTrendScheduler(): void {
   const cronExpr = config.WEEKLY_GITTREND_CRON;
   if (!cron.validate(cronExpr)) {
@@ -183,7 +215,7 @@ function startWeeklyGitTrendScheduler(): void {
     await runWeeklyGitTrend();
   });
 
-  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday 10:40 local, after Sat 21:00 MSK JSON)`);
+  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday publish from Saturday ingest)`);
 }
 
 function startWeeklyWeirdGitHubScheduler(): void {

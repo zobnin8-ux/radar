@@ -22,6 +22,7 @@ import { loadSettings, saveSettings, type AppSettings } from "../storage/setting
 import { getArchiveOverview } from "../storage/newsStore.js";
 import { getLastWeeklyTrend } from "../storage/trendsStore.js";
 import { filterRssErrors, loadState } from "../storage/stateStore.js";
+import { buildPhaseViews, readProgress } from "../utils/progress.js";
 import { cronToLabel, SCHEDULE_PRESETS } from "../utils/schedule.js";
 import { logger } from "../utils/logger.js";
 
@@ -109,6 +110,15 @@ async function handleApi(
         ),
       }),
       schedulePresets: SCHEDULE_PRESETS,
+    });
+    return;
+  }
+
+  if (pathname === "/api/progress" && method === "GET") {
+    const data = await readProgress();
+    json(res, 200, {
+      ...data,
+      phases: buildPhaseViews(data),
     });
     return;
   }

@@ -1,6 +1,5 @@
 import { buildWeirdGitHubPost } from "../gittrend/buildWeirdGitHubPost.js";
-import { fetchWeeklyRadar } from "../gittrend/fetchWeeklyRadar.js";
-import { validateReport } from "../gittrend/validateReport.js";
+import { loadWeeklyRadarForPublish } from "../gittrend/loadWeeklyRadarReport.js";
 import {
   isWeirdFindAlreadyPublished,
   markWeirdWeekProcessed,
@@ -13,10 +12,12 @@ import { getAdminChatId } from "../storage/adminStore.js";
 import { sendTelegramMessage } from "../telegram/botApi.js";
 import { sendPost } from "../telegram/sendPost.js";
 import { logger } from "../utils/logger.js";
+import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
 
 export interface WeirdGitHubResult {
   success: boolean;
   message: string;
+  publishedCount?: number;
 }
 
 let weirdGitHubRunning = false;
@@ -46,28 +47,40 @@ export async function runWeeklyWeirdGitHub(options?: {
   try {
     const settings = await loadSettings();
     const dryRun = settings.dryRun;
+    const progress = getActiveProgress() ?? bindProgress("weird", dryRun);
 
     logger.info(
       `Starting Weird GitHub rubric (dryRun=${dryRun}, force=${!!options?.force})...`
     );
 
-    let raw: unknown;
-    try {
-      raw = await fetchWeeklyRadar();
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      await alertAdmin(`не удалось скачать отчёт: ${errMsg}`);
-      return { success: false, message: errMsg };
-    }
-
     let report;
     try {
-      report = validateReport(raw);
+      await updateProgress("fetch", {
+        detail: options?.force ? "Скачивание…" : "Субботний ingest…",
+      });
+      let loaded = await loadWeeklyRadarForPublish({ allowLiveFetch: Boolean(options?.force) });
+      if (!loaded && !options?.force) {
+        logger.warn("Saturday GitTrend ingest not found — falling back to live fetch");
+        await alertAdmin("нет субботнего ingest — скачиваю файл с GitHub");
+        loaded = await loadWeeklyRadarForPublish({ allowLiveFetch: true });
+      }
+      if (!loaded) {
+        const errMsg = "Не удалось загрузить GitTrend JSON";
+        await progress.error(errMsg);
+        return { success: false, message: errMsg, publishedCount: 0 };
+      }
+      report = loaded.report;
+      await updateProgress("validate", {
+        detail:
+          loaded.source === "ingest-cache"
+            ? `${report.week} (принят в субботу)`
+            : `${report.week} (live)`,
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.error("Weird GitHub validation failed", error);
-      await alertAdmin(`битый JSON: ${errMsg}`);
-      return { success: false, message: `Validation failed: ${errMsg}` };
+      await alertAdmin(`не удалось загрузить отчёт: ${errMsg}`);
+      await progress.error(errMsg);
+      return { success: false, message: errMsg, publishedCount: 0 };
     }
 
     const find = report.weirdFindOfTheWeek;
@@ -75,22 +88,29 @@ export async function runWeeklyWeirdGitHub(options?: {
       const message = `Нет weirdFindOfTheWeek в отчёте ${report.week}`;
       logger.info(message);
       if (!options?.force) await markWeirdWeekProcessed(report.week);
-      return { success: true, message };
+      await progress.done({ published: 0, detail: message });
+      return { success: true, message, publishedCount: 0 };
     }
 
+    await updateProgress("validate", { detail: find.repo });
     if (!options?.force && (await isWeirdFindAlreadyPublished(report.week, find.repo))) {
       const message = `Странный GitHub за ${report.week} уже опубликован (${find.repo})`;
       logger.info(message);
-      return { success: true, message };
+      await progress.done({ published: 0, detail: message });
+      return { success: true, message, publishedCount: 0 };
     }
 
+    await updateProgress("publish", { detail: find.title.slice(0, 80) });
     const post = buildWeirdGitHubPost(find);
     const sent = await sendPost({ text: post, dryRun });
 
     if (!sent) {
+      const failMsg = `Не удалось опубликовать «${find.title}»`;
+      await progress.error(failMsg);
       return {
         success: false,
-        message: `Не удалось опубликовать «${find.title}»`,
+        message: failMsg,
+        publishedCount: 0,
       };
     }
 
@@ -126,6 +146,7 @@ export async function runWeeklyWeirdGitHub(options?: {
       : `Опубликован «Странный GitHub недели»: ${find.repo}`;
 
     logger.info(message);
+    await progress.done({ published: dryRun ? 0 : 1, detail: message });
     await recordLastRun({
       trigger: "cron",
       success: true,
@@ -133,12 +154,13 @@ export async function runWeeklyWeirdGitHub(options?: {
       message,
     });
 
-    return { success: true, message };
+    return { success: true, message, publishedCount: dryRun ? 0 : 1 };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.error("Weekly Weird GitHub failed", error);
     await alertAdmin(errMsg);
-    return { success: false, message: errMsg };
+    await getActiveProgress()?.error(errMsg);
+    return { success: false, message: errMsg, publishedCount: 0 };
   } finally {
     weirdGitHubRunning = false;
   }

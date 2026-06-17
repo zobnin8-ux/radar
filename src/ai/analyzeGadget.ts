@@ -323,16 +323,22 @@ function parseResponse(content: string, batch: NewsItem[]): GadgetEvaluation[] {
   return results;
 }
 
-export async function analyzeGadgets(candidates: NewsItem[]): Promise<AnalyzeGadgetsResult> {
+export async function analyzeGadgets(
+  candidates: NewsItem[],
+  onBatch?: (current: number, total: number) => void
+): Promise<AnalyzeGadgetsResult> {
   if (candidates.length === 0) {
     return { accepted: [], evaluated: [] };
   }
 
   const evaluated: GadgetEvaluation[] = [];
   const limit = Math.min(candidates.length, 45);
+  const totalBatches = Math.ceil(limit / BATCH_SIZE);
 
   for (let offset = 0; offset < limit; offset += BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + BATCH_SIZE);
+    const batchNum = Math.floor(offset / BATCH_SIZE) + 1;
+    onBatch?.(batchNum, totalBatches);
 
     logger.info(`OpenAI: analyzing ${batch.length} in-the-box candidates...`);
 

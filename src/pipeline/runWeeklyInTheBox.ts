@@ -35,6 +35,7 @@ import { dedupeNews } from "../utils/dedupe.js";
 import { verifyImageUrlAccessible } from "../utils/deviceImage.js";
 import { prefilterGadgetNews } from "../utils/gadgetPrefilter.js";
 import { logger } from "../utils/logger.js";
+import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
 import { routeInterestingGadgetRejections } from "./routeGadgetToRadar.js";
 
 const RSS_LOOKBACK_DAYS = 7;
@@ -42,6 +43,7 @@ const RSS_LOOKBACK_DAYS = 7;
 export interface InTheBoxResult {
   success: boolean;
   message: string;
+  publishedCount?: number;
 }
 
 export interface RunInTheBoxOptions {
@@ -287,13 +289,14 @@ async function finishPublishedRun(
   stats.message = message;
   logger.info(message);
   await persistStats(stats, dryRun);
+  await getActiveProgress()?.done({ published: dryRun ? 0 : 1, detail: message });
   await recordLastRun({
     trigger: trigger === "manual" ? "telegram" : "cron",
     success: true,
     publishedCount: 1,
     message,
   });
-  return { success: true, message };
+  return { success: true, message, publishedCount: dryRun ? 0 : 1 };
 }
 
 /** Запас: если live RSS не опубликовал — пробуем готовый пост (cron и ручной /box). */
@@ -408,7 +411,15 @@ async function failOrUseReserve(
   stats.message = message;
   logger.info(message);
   await persistStats(stats, dryRun);
-  return { success: publishFailures.length === 0, message };
+  const progress = getActiveProgress();
+  if (progress) {
+    if (publishFailures.length === 0) {
+      await progress.done({ published: 0, detail: message });
+    } else {
+      await progress.error(message);
+    }
+  }
+  return { success: publishFailures.length === 0, message, publishedCount: 0 };
 }
 
 export async function runWeeklyInTheBox(
@@ -425,6 +436,7 @@ export async function runWeeklyInTheBox(
   try {
     const settings = await loadSettings();
     const dryRun = settings.dryRun;
+    const progress = getActiveProgress() ?? bindProgress("box", dryRun);
 
     if (trigger === "cron") {
       const slot = getInTheBoxScheduledSlot();
@@ -434,15 +446,21 @@ export async function runWeeklyInTheBox(
         logger.info(message);
         stats.message = message;
         await persistStats(stats, dryRun);
-        return { success: true, message };
+        await progress.done({ published: 0, detail: message });
+        return { success: true, message, publishedCount: 0 };
       }
     }
 
     logger.info(`Starting «Будущее в коробке» (${trigger}, dryRun=${dryRun})...`);
 
     const sources = getInTheBoxSourceConfigs();
-    const allNews = await fetchAllNews(sources);
+    await updateProgress("rss", { current: 0, total: sources.length, detail: "Загрузка…" });
+    const allNews = await fetchAllNews(sources, (current, total, sourceName) =>
+      void updateProgress("rss", { current, total, detail: sourceName })
+    );
     logger.info(`In-the-box RSS: ${allNews.length} items`);
+
+    await updateProgress("filter", { detail: `${allNews.length} из RSS` });
 
     const since = new Date();
     since.setDate(since.getDate() - RSS_LOOKBACK_DAYS);
@@ -493,11 +511,21 @@ export async function runWeeklyInTheBox(
       return failOrUseReserve(trigger, dryRun, stats, formatBoxFailureMessage(stats));
     }
 
+    await updateProgress("filter", {
+      current: passed.length,
+      total: unknown.length,
+      detail: `${passed.length} кандидатов`,
+    });
+
     const enriched = await enrichNewsBatch(passed);
     const withImages = enriched.filter((n) => n.imageUrl).length;
     logger.info(`Article images: ${withImages}/${enriched.length} candidates have imageUrl`);
 
-    const { accepted, evaluated } = await analyzeGadgets(enriched);
+    const analyzeTotal = Math.ceil(Math.min(enriched.length, 45) / 15);
+    await updateProgress("analyze", { current: 0, total: analyzeTotal, detail: "OpenAI…" });
+    const { accepted, evaluated } = await analyzeGadgets(enriched, (current, total) =>
+      void updateProgress("analyze", { current, total, detail: `пакет ${current}/${total}` })
+    );
     stats.accepted = accepted.length;
     tallyAiRejections(evaluated, stats);
 
@@ -542,9 +570,16 @@ export async function runWeeklyInTheBox(
     const publishFailures: string[] = [];
     const reserveCandidates: PreparedGadget[] = [];
 
+    await updateProgress("vision", { current: 0, total: accepted.length, detail: "Проверка фото…" });
     for (let i = 0; i < accepted.length; i++) {
       const gadget = accepted[i];
       if (!gadget) continue;
+
+      await updateProgress("vision", {
+        current: i + 1,
+        total: accepted.length,
+        detail: (gadget.analysis.deviceName ?? gadget.news.title).slice(0, 80),
+      });
 
       const prepared = await prepareGadgetForPublish(
         gadget,
@@ -554,6 +589,9 @@ export async function runWeeklyInTheBox(
       );
       if (!prepared) continue;
 
+      await updateProgress("publish", {
+        detail: (prepared.gadget.analysis.deviceName ?? prepared.gadget.news.title).slice(0, 80),
+      });
       const published = await commitPublication(prepared, trigger, dryRun, false);
       if (published) {
         stats.published = 1;
@@ -607,7 +645,8 @@ export async function runWeeklyInTheBox(
     stats.message = errMsg;
     await persistStats(stats, (await loadSettings()).dryRun);
     logger.error("Weekly in-the-box failed", error);
-    return { success: false, message: errMsg };
+    await getActiveProgress()?.error(errMsg);
+    return { success: false, message: errMsg, publishedCount: 0 };
   } finally {
     inTheBoxRunning = false;
   }

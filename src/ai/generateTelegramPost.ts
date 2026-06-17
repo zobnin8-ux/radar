@@ -57,6 +57,7 @@ const postResponseSchema = z.object({
   whatHappened: z.string(),
   whyImportant: z.string(),
   spheres: z.string(),
+  keyFact: z.string().optional(),
 });
 
 const SYSTEM_PROMPT = `You write posts for the Russian Telegram channel "Радар будущего".
@@ -72,12 +73,20 @@ Adjust tone to the maturity level in the user message:
 - signal — observational, early-stage; no triumphalism
 - failure — factual; no dramatization
 
+CONCRETENESS (mandatory):
+- Description in the user message is the primary source of facts. Pick ONE key fact (number, %, timeline, company/product name, scale, before→after comparison) and anchor the post on it.
+- If the title or description contains a number, percent, deadline, name, scale, or comparison — it MUST appear in whatHappened or whyImportant. Do not replace specifics with vague wording (e.g. "50%" must not become "significantly faster").
+- whatHappened must LEAD with the most concrete or surprising fact, not a generic recap.
+- whyImportant must state a CONSEQUENCE tied to that fact ("what this leads to"), not a hypothetical possibility. Avoid subjunctive mood and filler as the main register: "may significantly", "possibly", "potentially", "in the long term", "could change", "opens the door/opportunities". Occasional uncertainty is OK only when the source is genuinely uncertain — not as a default frame.
+- Fill keyFact with the single most concrete fact from the source (number/name/scale/comparison), or "" if none exist. You MUST use keyFact in whatHappened and/or whyImportant.
+
 Return JSON:
 {
   "headline": "Russian headline: convey what CHANGED or became possible, not just describe the event. Colon with a clarifier is OK. No clickbait. Examples — before → after: «ИИ ускоряет планирование стройки в Британии» → «Британия отдала ИИ согласование строек — сроки вдвое»; «New approach to managing LLM agents» → «У ИИ-агентов появился „геном“: поведение можно читать как код»",
-  "whatHappened": "1-2 sentences explaining what happened, OR empty string if the headline already states the fact and repeating would add nothing",
-  "whyImportant": "1-2 sentences: forward-looking — where this leads, what trajectory it signals, what may become possible if the trend continues; aligned with impactHorizon from the user message; no empty phrases like 'important step' without specifics; do NOT restate whatHappened",
-  "spheres": "2-3 related spheres in Russian, separated by /"
+  "whatHappened": "1-2 sentences with the concrete fact first, OR empty string if the headline already states the fact and repeating would add nothing",
+  "whyImportant": "1-2 sentences: consequence/trajectory tied to the concrete fact; aligned with impactHorizon; no empty phrases; do NOT restate whatHappened; not mainly subjunctive",
+  "spheres": "2-3 related spheres in Russian, separated by /",
+  "keyFact": "most concrete fact from source or empty string"
 }`;
 
 const SYSTEM_PROMPT_RU_SOURCE = `You write posts for the Russian Telegram channel "Радар будущего".
@@ -87,9 +96,14 @@ const SYSTEM_PROMPT_RU_SOURCE = `You write posts for the Russian Telegram channe
 
 Правила:
 - headline: верни заголовок источника дословно (допустима только лёгкая обрезка по длине, без перефразирования).
-- whatHappened: 1–2 предложения по-русски ИЛИ пустая строка "", если заголовок уже полностью передаёт факт и отдельный блок будет повтором.
-- whyImportant: 1–2 предложения взглядом вперёд — к чему ведёт, какой сигнал о траектории технологии, что может измениться при продолжении тренда; согласуй с горизонтом (impactHorizon) из запроса; без штампов («важный шаг», «меняет индустрию» без конкретики); не пересказывай whatHappened.
+- whatHappened: 1–2 предложения по-русски ИЛИ пустая строка "", если заголовок уже полностью передаёт факт и отдельный блок будет повтором. Начинай с самого конкретного факта (цифра, имя, масштаб, сравнение), не с общего пересказа.
+- whyImportant: 1–2 предложения — следствие, привязанное к конкретике («к чему это ведёт»), согласуй с горизонтом (impactHorizon). Не строй фразу на сослагательном наклонении и штампах: «может значительно», «возможно», «потенциально», «в перспективе», «способно изменить», «открывает дорогу/возможности». Сослагательное — редко и только при честной неопределённости источника. Не пересказывай whatHappened.
 - spheres: 2–3 смежные сферы по-русски через /
+
+Конкретика (обязательно):
+- Поле «Описание» в запросе — главный источник фактов. Выбери один ключевой факт и заякорь на нём пост.
+- Если в заголовке или описании есть число, процент, срок, имя компании/продукта, масштаб или сравнение — оно обязано быть в whatHappened или whyImportant. Не заменяй конкретику размытыми формулировками.
+- keyFact: самый конкретный факт из источника или "" если фактов нет. Обязательно используй keyFact в whatHappened и/или whyImportant.
 
 Тон по уровню (level в запросе):
 - breakthrough — сдержанно-весомый, без сенсаций
@@ -102,7 +116,8 @@ Return JSON:
   "headline": "оригинальный русский заголовок",
   "whatHappened": "1-2 предложения или пустая строка",
   "whyImportant": "1-2 предложения",
-  "spheres": "сфера / сфера"
+  "spheres": "сфера / сфера",
+  "keyFact": "конкретный факт или пустая строка"
 }`;
 
 export type PostLayout = "full" | "compact";
@@ -181,7 +196,7 @@ function buildPostUserMessage(analyzed: AnalyzedNews, ruSource: boolean): string
 Источник: ${news.source}
 Заголовок: ${news.title}
 URL: ${news.url}
-Описание: ${news.description ?? "(нет)"}
+Описание (главный источник фактов — выбери отсюда один ключевой факт для поста): ${news.description ?? "(нет)"}
 Уровень: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
 Категория: ${analysis.category}
 Технология: ${analysis.technology ?? "(нет)"}
@@ -194,12 +209,28 @@ URL: ${news.url}
 Source: ${news.source}
 Title: ${news.title}
 URL: ${news.url}
-Description: ${news.description ?? "(none)"}
+Description (primary source of facts — pick ONE key fact from here for the post): ${news.description ?? "(none)"}
 Maturity level: ${analysis.level} (${LEVEL_DESCRIPTIONS[analysis.level] ?? analysis.level})
 Category: ${analysis.category}
 Technology: ${analysis.technology ?? "(none)"}
 Impact horizon: ${analysis.impactHorizon}
 Editor note: ${analysis.reason}`;
+}
+
+function warnIfKeyFactMissing(parts: PostParts, title: string): void {
+  const keyFact = parts.keyFact?.trim();
+  if (!keyFact) return;
+
+  const haystack = `${parts.whatHappened} ${parts.whyImportant} ${parts.headline}`.toLowerCase();
+  const needle = keyFact.toLowerCase();
+  if (haystack.includes(needle)) return;
+
+  const digits = keyFact.match(/\d+[\d.,%]*/g);
+  if (digits?.some((d) => haystack.includes(d.toLowerCase()))) return;
+
+  logger.warn(
+    `keyFact not reflected in post for "${title.slice(0, 60)}": keyFact="${keyFact.slice(0, 80)}"`
+  );
 }
 
 /** Черновик поста (без наблюдателя) — для очереди и публикации */
@@ -233,6 +264,8 @@ export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostPar
   if (ruSource) {
     parts.headline = news.title;
   }
+
+  warnIfKeyFactMissing(parts, news.title);
 
   return parts;
 }

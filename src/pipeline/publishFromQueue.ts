@@ -27,6 +27,7 @@ export interface PublishFromQueueResult {
 export async function publishFromQueue(options: {
   limit: number;
   dryRun?: boolean;
+  onProgress?: (current: number, total: number, title: string) => void;
 }): Promise<PublishFromQueueResult> {
   const settings = await loadSettings();
   const dryRun = options.dryRun ?? settings.dryRun;
@@ -86,7 +87,11 @@ export async function publishFromQueue(options: {
   }
 
   logger.info(`Publishing ${fromQueue.length} item(s) from queue (limit ${limit})...`);
-  const publishedCount = await publishPosts(fromQueue, { dryRun, postType: "article" });
+  const publishedCount = await publishPosts(fromQueue, {
+    dryRun,
+    postType: "article",
+    onProgress: options.onProgress,
+  });
 
   return {
     publishedCount,

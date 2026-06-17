@@ -16,9 +16,20 @@
 | 4 | Прорыв | Публикуется в канал |
 | — | Сбой системы | Публикуется в канал |
 
-Посты основного потока — **текст + превью ссылки** (HTML). В конце — один тематический хэштег (`#AI`, `#Space`, …) для навигации по каналу (`channelHashtag.ts`). Опционально блок **«📡 Наблюдение»** — комментарий наблюдателя 2.0 (`generateObserverComment`, gpt-4o при публикации).
+Посты основного потока — **текст + превью ссылки** (HTML). В конце — один тематический хэштег (`#AI`, `#Space`, …) для навигации по каналу (`channelHashtag.ts`).
+
+**Формат поста** (`generateTelegramPost.ts`):
+- **Полный вид** — impact, breakthrough, failure, или когда есть блок «Что произошло».
+- **Компактный вид** — signal без дублирующего «Что произошло»: заголовок → сразу смысл, без жирного «Почему это важно:».
+- Блок **«Что произошло»** опускается, если заголовок уже передаёт факт.
+- **«Почему это важно»** — взгляд вперёд (траектория, горизонт), не пересказ.
+- EN-источники: заголовок с радарным углом (сдвиг/следствие). RU-источники: заголовок **дословно** из RSS.
+
+Опционально блок **«📡 Наблюдение»** — наблюдатель 2.0 (`generateObserverComment`, gpt-4o). В signal-постах показывается с вероятностью `OBSERVER_SIGNAL_RATE` (по умолчанию **45%**); в impact/breakthrough/failure — **всегда**. Зачины «Представьте…» / «Кажется…» отфильтровываются.
 
 Для уровней **влияние** и **прорыв** при совпадении с прошлым наблюдением может добавляться блок **«📡 Сигнал подтвердился»**.
+
+Подробнее: `RADAR-CONTENT-IMPROVEMENTS-TZ.md`, `RADAR-CONTENT-IMPROVEMENTS-TZ-2.md`.
 
 ## Расписание: основной поток и рубрики
 
@@ -110,11 +121,20 @@ TechCrunch, The Verge, Ars Technica, MIT Technology Review, IEEE Spectrum, New A
 
 ## Что делает бот
 
-1. Загружает RSS за 24 ч → pre-filter → content policy → OpenAI
+1. Загружает RSS за 24 ч → pre-filter → content policy → OpenAI-анализ (`OPENAI_ANALYSIS_MODEL`, порог `MIN_TRACK_SCORE`)
 2. Уровень 1 → `observations.json`; 2–4 → умная очередь `news.json` (TTL, score, prune)
-3. Публикация: равномерно по графику и/или при `/run`
-4. **Инъекция** `/inject N` — из очереди вне дневного лимита
+3. Публикация: текст поста на `OPENAI_POST_MODEL` → равномерно по графику и/или при `/run`
+4. **Инъекция** `/inject 5` — из очереди вне дневного лимита (одной строкой в Telegram)
 5. Еженедельные рубрики по cron + команды в Telegram
+
+### Основной поток: AI-пайплайн
+
+| Этап | Модуль | Модель / настройка |
+|---|---|---|
+| Анализ RSS | `analyzeNews.ts` | `OPENAI_ANALYSIS_MODEL` (default `gpt-4o-mini`), калибровка уровней signal/impact/breakthrough |
+| Ранний отбор | `MIN_TRACK_SCORE` | default **6** (в очередь; пороги публикации — `MIN_SCORE_*` в config) |
+| Текст поста | `generateTelegramPost.ts` | `OPENAI_POST_MODEL` (default `gpt-4o`), `OPENAI_POST_TEMPERATURE` **0.55** |
+| Наблюдатель | `generateObserverComment.ts` | gpt-4o, `OBSERVER_SIGNAL_RATE` для signal |
 
 ### Рубрика «Направление недели»
 
@@ -229,6 +249,8 @@ GITTREND_RADAR_URL=https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/rep
 GITTREND_MAX_POSTS=3
 GITTREND_MIN_SIGNAL_STRENGTH=medium
 GITTREND_CATEGORY_COOLDOWN_DAYS=14
+MIN_TRACK_SCORE=6
+OBSERVER_SIGNAL_RATE=0.45
 DASHBOARD_PASSWORD=...
 DRY_RUN=false
 ```
@@ -262,7 +284,7 @@ DRY_RUN=false
 | `/status` | Статус, график публикаций |
 | `/run` | Пайплайн + публикация |
 | `/dry` | Тест без канала |
-| `/inject 5` | Инъекция из очереди (до 10) |
+| `/inject 5` | Инъекция из очереди (1–10), **одной строкой**: `/inject 5` |
 | `/pause` / `/resume` | Пауза cron (процесс живёт) |
 | `/stop` | Полная остановка бота (для ярлыка без терминала) |
 | `/today` | Посты за сегодня |
@@ -328,6 +350,8 @@ data/
   in-the-box-stats.json       статистика прогонов /box
   settings.json               лимиты, RSS, even spread
 docs/Радар будущего.md        заметка Obsidian
+RADAR-CONTENT-IMPROVEMENTS-TZ.md   ТЗ-1: качество текста основного потока
+RADAR-CONTENT-IMPROVEMENTS-TZ-2.md ТЗ-2: ритм ленты, наблюдатель, layout
 RADAR-SCHEDULE-UPDATE.md      расписание GitTrend ↔ Radar
 ```
 

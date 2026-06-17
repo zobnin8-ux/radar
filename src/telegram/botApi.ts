@@ -11,16 +11,16 @@ function getToken(): string | undefined {
   return config.TELEGRAM_BOT_TOKEN;
 }
 
-export async function sendTelegramMessage(
+export async function sendTelegramMessageId(
   chatId: number | string,
   text: string,
   options?: {
     html?: boolean;
     replyMarkup?: { inline_keyboard: Array<Array<Record<string, string>>> };
   }
-): Promise<boolean> {
+): Promise<number | null> {
   const token = getToken();
-  if (!token) return false;
+  if (!token) return null;
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
 
@@ -44,14 +44,64 @@ export async function sendTelegramMessage(
       body: JSON.stringify(body),
     });
 
-    const data = (await response.json()) as TelegramResponse;
+    const data = (await response.json()) as TelegramResponse & {
+      result?: { message_id?: number };
+    };
     if (!response.ok || !data.ok) {
       logger.error("Telegram sendMessage error", data.description);
+      return null;
+    }
+    return data.result?.message_id ?? null;
+  } catch (error) {
+    logger.error("Failed to send Telegram message", error);
+    return null;
+  }
+}
+
+export async function sendTelegramMessage(
+  chatId: number | string,
+  text: string,
+  options?: {
+    html?: boolean;
+    replyMarkup?: { inline_keyboard: Array<Array<Record<string, string>>> };
+  }
+): Promise<boolean> {
+  return (await sendTelegramMessageId(chatId, text, options)) !== null;
+}
+
+export async function editTelegramMessage(
+  chatId: number | string,
+  messageId: number,
+  text: string
+): Promise<boolean> {
+  const token = getToken();
+  if (!token) return false;
+
+  const url = `https://api.telegram.org/bot${token}/editMessageText`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        disable_web_page_preview: false,
+      }),
+    });
+
+    const data = (await response.json()) as TelegramResponse;
+    if (!response.ok || !data.ok) {
+      if (!data.description?.includes("message is not modified")) {
+        logger.debug("Telegram editMessage error", data.description);
+      }
       return false;
     }
     return true;
   } catch (error) {
-    logger.error("Failed to send Telegram message", error);
+    logger.error("Failed to edit Telegram message", error);
     return false;
   }
 }

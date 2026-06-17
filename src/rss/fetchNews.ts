@@ -197,11 +197,16 @@ export async function fetchSingleSource(source: RssSourceConfig): Promise<NewsIt
   return fetchFromSource(source);
 }
 
-export async function fetchAllNews(sources: RssSourceConfig[]): Promise<NewsItem[]> {
+export async function fetchAllNews(
+  sources: RssSourceConfig[],
+  onSource?: (current: number, total: number, sourceName: string) => void
+): Promise<NewsItem[]> {
+  const enabled = sources.filter((s) => s.enabled);
   const allNews: NewsItem[] = [];
 
-  for (const source of sources) {
-    if (!source.enabled) continue;
+  for (let i = 0; i < enabled.length; i++) {
+    const source = enabled[i];
+    onSource?.(i + 1, enabled.length, source.name);
     try {
       logger.info(`Fetching RSS: ${source.name}...`);
       const items = await fetchFromSource(source);

@@ -345,17 +345,19 @@ export interface AnalysisResult {
 }
 
 export async function analyzeForPipeline(
-  candidates: NewsItem[]
+  candidates: NewsItem[],
+  onBatch?: (current: number, total: number) => void
 ): Promise<AnalysisResult> {
   const publishable: AnalyzedNews[] = [];
   const observations: AnalyzedNews[] = [];
   const seenUrls = new Set<string>();
   const limit = Math.min(candidates.length, MAX_ANALYZE_PER_RUN);
+  const totalBatches = Math.ceil(limit / BATCH_SIZE);
 
   for (let offset = 0; offset < limit; offset += BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + BATCH_SIZE);
     const batchNum = Math.floor(offset / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(limit / BATCH_SIZE);
+    onBatch?.(batchNum, totalBatches);
     logger.info(`Analysis batch ${batchNum}/${totalBatches}...`);
 
     let results: AnalyzedNews[] = [];
