@@ -1,3 +1,5 @@
+import { config } from "../config.js";
+
 function normalizeText(text: string): string {
   return text
     .toLowerCase()
@@ -20,6 +22,10 @@ function textOverlapRatio(a: string, b: string): number {
 }
 
 const CLICHE_PATTERNS = [
+  /^\s*представьте/i,
+  /^\s*кажется[,\s]/i,
+  /^\s*похоже[,\s]/i,
+  /^\s*интересно[,\s]/i,
   /это показывает/i,
   /показывает тенденц/i,
   /демонстрирует/i,
@@ -52,6 +58,17 @@ export const OBSERVER_MAX_WORDS = 90;
 
 const WHY_OVERLAP_THRESHOLD = 0.38;
 const WHAT_OVERLAP_THRESHOLD = 0.38;
+
+/** impact/breakthrough/failure — всегда; signal — с вероятностью OBSERVER_SIGNAL_RATE */
+export function shouldShowObserver(level: string): boolean {
+  if (level === "impact" || level === "breakthrough" || level === "failure") {
+    return true;
+  }
+  if (level === "signal") {
+    return Math.random() < config.OBSERVER_SIGNAL_RATE;
+  }
+  return false;
+}
 
 export function shouldIncludeObserver(
   comment: string | null | undefined,

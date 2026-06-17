@@ -51,6 +51,9 @@ const envSchema = z.object({
   MIN_SCORE_FAILURE: z.coerce.number().int().min(1).max(10).default(8),
   /** Ранний гейт: что попадает в observations и очередь после AI-анализа */
   MIN_TRACK_SCORE: z.coerce.number().int().min(1).max(10).default(6),
+  /** Вероятность блока «Наблюдение» для постов уровня signal (0–1) */
+  OBSERVER_SIGNAL_RATE: z.coerce.number().min(0).max(1).default(0.45),
+  OPENAI_POST_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.55),
 });
 
 const parsed = envSchema.safeParse(process.env);

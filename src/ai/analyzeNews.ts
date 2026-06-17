@@ -199,12 +199,20 @@ Source authority matters:
 - Prefer primary source over media rewrites of the same story
 - If two items are equal, favor tier 1 (trust=1.0) over tier 2
 
-Assign maturity level:
-1. observation — R&D, prototypes, lab experiments, early ideas. Too early for conclusions.
-2. signal — leaving the lab, first commercial use, pilots, successful tests.
-3. impact — changing market, mass adoption, industry shift.
-4. breakthrough — rare paradigm shifts.
-5. failure — accidents, shutdowns, technological disasters.
+Assign maturity level — do NOT default everything to signal. If facts support a higher level, assign it:
+
+1. observation — R&D, prototypes, lab experiments, early ideas. Too early for conclusions. Most arXiv papers and lab announcements.
+2. signal — leaving the lab, first pilot/commercial use, successful tests. First real applications, not yet at industry scale.
+3. impact — technology is ALREADY deployed in production / used by users / adopted at industry scale. Examples: government rollout, product used by millions, industry standard emerging. If the news describes real large-scale use — this is impact, not signal.
+4. breakthrough — a result previously considered unreachable or far away; a genuine change of approach. Rare, but not never.
+5. failure — accident, recall, shutdown, failed test, technological disaster.
+
+Level calibration examples:
+- Lab publishes a new model architecture → usually observation or signal.
+- Company ships feature to millions of paying users → impact.
+- First time a long-standing barrier is crossed in science/engineering → breakthrough.
+
+Do not assign signal by default when impact or breakthrough criteria are met.
 
 CONTENT POLICY (mandatory, overrides everything):
 Radar Future is about civilian science, technology, engineering, and innovation — NOT politics, military, weapons, wars, geopolitics, or defense programs.

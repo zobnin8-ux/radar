@@ -5,7 +5,7 @@ import { PUBLISHABLE_LEVELS, type AnalyzedNews } from "../types.js";
 import { VISUAL_IDENTITY } from "../visual/identity.js";
 import { escapeTelegramHtml } from "../utils/telegramHtml.js";
 import { generateObserverComment } from "./generateObserverComment.js";
-import { shouldIncludeObserver } from "../utils/observerComment.js";
+import { shouldIncludeObserver, shouldShowObserver } from "../utils/observerComment.js";
 import { findEarliestMatchingObservation } from "../utils/observationMatch.js";
 import { loadObservations } from "../storage/observationsStore.js";
 import { generateSignalConfirmedBlock } from "./generateSignalConfirmed.js";
@@ -74,7 +74,7 @@ Adjust tone to the maturity level in the user message:
 
 Return JSON:
 {
-  "headline": "Russian headline, concise",
+  "headline": "Russian headline: convey what CHANGED or became possible, not just describe the event. Colon with a clarifier is OK. No clickbait. Examples — before → after: «ИИ ускоряет планирование стройки в Британии» → «Британия отдала ИИ согласование строек — сроки вдвое»; «New approach to managing LLM agents» → «У ИИ-агентов появился „геном“: поведение можно читать как код»",
   "whatHappened": "1-2 sentences explaining what happened, OR empty string if the headline already states the fact and repeating would add nothing",
   "whyImportant": "1-2 sentences: forward-looking — where this leads, what trajectory it signals, what may become possible if the trend continues; aligned with impactHorizon from the user message; no empty phrases like 'important step' without specifics; do NOT restate whatHappened",
   "spheres": "2-3 related spheres in Russian, separated by /"
@@ -105,6 +105,38 @@ Return JSON:
   "spheres": "сфера / сфера"
 }`;
 
+export type PostLayout = "full" | "compact";
+
+/** Полный вид: impact/breakthrough/failure или непустое «Что произошло». Компактный: signal без whatHappened. */
+export function selectLayout(
+  level: AnalyzedNews["analysis"]["level"],
+  parts: z.infer<typeof postResponseSchema>
+): PostLayout {
+  if (parts.whatHappened.trim()) return "full";
+  if (level === "impact" || level === "breakthrough" || level === "failure") {
+    return "full";
+  }
+  return "compact";
+}
+
+function buildPostFooter(
+  esc: (s: string) => string,
+  horizon: string,
+  spheres: string,
+  source: string,
+  url: string
+): string {
+  return `
+<b>Горизонт влияния:</b>
+${esc(horizon)}
+
+<b>Сферы:</b>
+${esc(spheres)}
+
+<b>Источник:</b> ${esc(source)}
+<b>Ссылка:</b> ${esc(url)}`;
+}
+
 function buildPost(
   analyzed: AnalyzedNews,
   parts: z.infer<typeof postResponseSchema>,
@@ -117,7 +149,17 @@ function buildPost(
   const horizon = HORIZON_LABELS[analysis.impactHorizon] ?? analysis.impactHorizon;
   const category = CATEGORY_LABELS[analysis.category] ?? analysis.category;
   const spheres = parts.spheres || category;
+  const layout = selectLayout(analysis.level, parts);
   const whatHappened = parts.whatHappened.trim();
+  const footer = buildPostFooter(esc, horizon, spheres, news.source, news.url);
+
+  if (layout === "compact") {
+    return `${identity.symbol} <b>${esc(identity.label)}</b>
+<b>${esc(parts.headline)}</b>
+
+${esc(parts.whyImportant)}${signalConfirmedBlock}${observationBlock}${footer}`;
+  }
+
   const whatBlock = whatHappened
     ? `\n<b>Что произошло:</b>\n${esc(whatHappened)}\n`
     : "";
@@ -126,16 +168,7 @@ function buildPost(
 <b>${esc(parts.headline)}</b>
 ${whatBlock}
 <b>Почему это важно:</b>
-${esc(parts.whyImportant)}${signalConfirmedBlock}${observationBlock}
-
-<b>Горизонт влияния:</b>
-${esc(horizon)}
-
-<b>Сферы:</b>
-${esc(spheres)}
-
-<b>Источник:</b> ${esc(news.source)}
-<b>Ссылка:</b> ${esc(news.url)}`;
+${esc(parts.whyImportant)}${signalConfirmedBlock}${observationBlock}${footer}`;
 }
 
 export type PostParts = z.infer<typeof postResponseSchema>;
@@ -176,7 +209,7 @@ export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostPar
 
   const response = await openai.chat.completions.create({
     model: config.OPENAI_POST_MODEL,
-    temperature: 0.4,
+    temperature: config.OPENAI_POST_TEMPERATURE,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: ruSource ? SYSTEM_PROMPT_RU_SOURCE : SYSTEM_PROMPT },
@@ -232,18 +265,25 @@ export async function generateTelegramPost(analyzed: AnalyzedNews): Promise<stri
     }
   }
 
-  let observerComment: string | null = analysis.observerComment ?? null;
-  if (!shouldIncludeObserver(observerComment, parts.whyImportant, parts.whatHappened)) {
-    observerComment = await generateObserverComment({
-      title: news.title,
-      source: news.source,
-      whatHappened: parts.whatHappened,
-      whyImportant: parts.whyImportant,
-      level: analysis.level,
-      technology: analysis.technology,
-    });
-  } else {
-    logger.info(`Using pre-generated observer for "${news.title.slice(0, 50)}…"`);
+  let observerComment: string | null = null;
+  if (shouldShowObserver(analysis.level)) {
+    const pregenerated = analysis.observerComment ?? null;
+    if (shouldIncludeObserver(pregenerated, parts.whyImportant, parts.whatHappened)) {
+      observerComment = pregenerated;
+      logger.info(`Using pre-generated observer for "${news.title.slice(0, 50)}…"`);
+    } else {
+      const generated = await generateObserverComment({
+        title: news.title,
+        source: news.source,
+        whatHappened: parts.whatHappened,
+        whyImportant: parts.whyImportant,
+        level: analysis.level,
+        technology: analysis.technology,
+      });
+      if (shouldIncludeObserver(generated, parts.whyImportant, parts.whatHappened)) {
+        observerComment = generated;
+      }
+    }
   }
 
   const observationBlock = observerComment
