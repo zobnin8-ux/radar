@@ -211,6 +211,8 @@ npm run launcher:shortcut
 
 ```env
 OPENAI_API_KEY=sk-...
+OPENAI_ANALYSIS_MODEL=gpt-4o-mini
+OPENAI_POST_MODEL=gpt-4o
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHANNEL_ID=@your_channel
 TELEGRAM_ADMIN_USER_ID=...
@@ -232,6 +234,9 @@ DRY_RUN=false
 
 | Переменная | Описание |
 |---|---|
+| `OPENAI_ANALYSIS_MODEL` | Модель для анализа RSS (по умолчанию `gpt-4o-mini`) |
+| `OPENAI_POST_MODEL` | Модель для текста поста в канал (по умолчанию `gpt-4o`) |
+| `MIN_TRACK_SCORE` | Ранний порог после анализа: в работу от score ≥ N (по умолчанию **6**) |
 | `POST_INTERVAL_CRON` | Сбор RSS (при even spread — без публикации) |
 | `PUBLISH_INTERVAL_CRON` | Тики публикации из очереди |
 | `WEEKLY_*_CRON` | Рубрики (локальное время ПК) |

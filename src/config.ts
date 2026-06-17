@@ -11,6 +11,8 @@ import {
 
 const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
+  OPENAI_ANALYSIS_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_POST_MODEL: z.string().default("gpt-4o"),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHANNEL_ID: z.string().optional(),
   TELEGRAM_ADMIN_USER_ID: z.coerce.number().int().positive().optional(),
@@ -47,6 +49,8 @@ const envSchema = z.object({
   MIN_SCORE_IMPACT: z.coerce.number().int().min(1).max(10).default(7),
   MIN_SCORE_BREAKTHROUGH: z.coerce.number().int().min(1).max(10).default(7),
   MIN_SCORE_FAILURE: z.coerce.number().int().min(1).max(10).default(8),
+  /** Ранний гейт: что попадает в observations и очередь после AI-анализа */
+  MIN_TRACK_SCORE: z.coerce.number().int().min(1).max(10).default(6),
 });
 
 const parsed = envSchema.safeParse(process.env);

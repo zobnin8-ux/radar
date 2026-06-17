@@ -163,7 +163,7 @@ function parseAnalysisResponse(
   return parsed.filter((entry) => entry.index >= 0 && entry.index < batchSize);
 }
 
-const MIN_TRACK_SCORE = 5;
+const MIN_TRACK_SCORE = config.MIN_TRACK_SCORE;
 const BATCH_SIZE = 20;
 const MAX_ANALYZE_PER_RUN = 60;
 
@@ -252,7 +252,7 @@ async function analyzeBatch(batch: NewsItem[]): Promise<AnalyzedNews[]> {
   logger.info(`OpenAI: analyzing ${batch.length} news items...`);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: config.OPENAI_ANALYSIS_MODEL,
     temperature: 0.2,
     response_format: { type: "json_object" },
     messages: [

@@ -33,11 +33,28 @@ import { requestShutdown } from "../utils/shutdown.js";
 import { sleep } from "../utils/sleep.js";
 import { getUpdates, sendTelegramMessage } from "./botApi.js";
 
+/** /inject@BotName 5 → cmd /inject, args [5]; /inject5 → args [5] */
+function parseTelegramCommand(text: string): { cmd: string; args: string[] } {
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { cmd: "", args: [] };
+
+  const token0 = parts[0].toLowerCase();
+  const at = token0.indexOf("@");
+  const base = at >= 0 ? token0.slice(0, at) : token0;
+
+  const gluedInject = base.match(/^\/inject(\d+)$/);
+  if (gluedInject) {
+    return { cmd: "/inject", args: [gluedInject[1], ...parts.slice(1)] };
+  }
+
+  return { cmd: base, args: parts.slice(1) };
+}
+
 const HELP_TEXT = `📡 Радар будущего — команды
 
 /status — как дела
 /run — опубликовать сейчас
-/inject 5 — инъекция из очереди (вне лимита)
+/inject <число> — инъекция из очереди, напр. /inject 5 (одной строкой)
 /dry — тест без канала
 /rutest — проверка RU-источников (4 шт., RSS, без AI)
 /pause — пауза
@@ -116,8 +133,7 @@ async function buildTodayText(): Promise<string> {
 async function handleCommand(chatId: number, userId: number | undefined, text: string): Promise<void> {
   if (!userId) return;
 
-  const parts = text.trim().split(/\s+/);
-  const cmd = parts[0].toLowerCase();
+  const { cmd, args } = parseTelegramCommand(text);
 
   if (cmd === "/start") {
     if (config.TELEGRAM_ADMIN_USER_ID && userId !== config.TELEGRAM_ADMIN_USER_ID) {
@@ -174,11 +190,11 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
       }
-      const n = Number(parts[1]);
+      const n = Number(args[0]);
       if (!Number.isFinite(n) || n < 1 || n > MAX_INJECT_PER_COMMAND) {
         await sendTelegramMessage(
           chatId,
-          `Укажите число от 1 до ${MAX_INJECT_PER_COMMAND}:\n/inject 5`
+          `Укажите число от 1 до ${MAX_INJECT_PER_COMMAND} одной строкой:\n/inject 5\n\nОтдельное сообщение «5» не сработает.`
         );
         return;
       }
@@ -249,7 +265,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
       }
-      const force = parts[1] === "force";
+      const force = args[0] === "force";
       await sendTelegramMessage(
         chatId,
         force
@@ -272,7 +288,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
       }
-      const force = parts[1] === "force";
+      const force = args[0] === "force";
       await sendTelegramMessage(
         chatId,
         force
@@ -353,7 +369,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
 
     case "/observer-queue": {
-      const force = parts[1] === "force";
+      const force = args[0] === "force";
       await sendTelegramMessage(
         chatId,
         force

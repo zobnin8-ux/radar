@@ -62,32 +62,45 @@ const postResponseSchema = z.object({
 const SYSTEM_PROMPT = `You write posts for the Russian Telegram channel "Радар будущего".
 
 The channel classifies technology events by maturity and significance — visual level is shown in the header.
+The channel is an early radar: posts should help readers see where a technology is heading, not just what happened today.
 
 Tone: smart, concise, no bureaucratic language, no hype, natural Russian.
+
+Adjust tone to the maturity level in the user message:
+- breakthrough — restrained and weighty; no sensationalism
+- impact — calm, matter-of-fact about market or industry shift
+- signal — observational, early-stage; no triumphalism
+- failure — factual; no dramatization
 
 Return JSON:
 {
   "headline": "Russian headline, concise",
-  "whatHappened": "1-2 sentences explaining what happened",
-  "whyImportant": "1-2 sentences on significance at this level",
+  "whatHappened": "1-2 sentences explaining what happened, OR empty string if the headline already states the fact and repeating would add nothing",
+  "whyImportant": "1-2 sentences: forward-looking — where this leads, what trajectory it signals, what may become possible if the trend continues; aligned with impactHorizon from the user message; no empty phrases like 'important step' without specifics; do NOT restate whatHappened",
   "spheres": "2-3 related spheres in Russian, separated by /"
 }`;
 
 const SYSTEM_PROMPT_RU_SOURCE = `You write posts for the Russian Telegram channel "Радар будущего".
 
 Источник на русском — перевод НЕ делать.
+Канал — радар ранних сигналов: читатель должен понять, куда ведёт траектория, а не только что случилось сегодня.
 
 Правила:
 - headline: верни заголовок источника дословно (допустима только лёгкая обрезка по длине, без перефразирования).
-- whatHappened и whyImportant: пиши по-русски, опираясь на русский заголовок и описание; пересказывай смысл, не переводи с английского.
+- whatHappened: 1–2 предложения по-русски ИЛИ пустая строка "", если заголовок уже полностью передаёт факт и отдельный блок будет повтором.
+- whyImportant: 1–2 предложения взглядом вперёд — к чему ведёт, какой сигнал о траектории технологии, что может измениться при продолжении тренда; согласуй с горизонтом (impactHorizon) из запроса; без штампов («важный шаг», «меняет индустрию» без конкретики); не пересказывай whatHappened.
 - spheres: 2–3 смежные сферы по-русски через /
 
-Тон: умный, сжатый, без канцелярита и хайпа.
+Тон по уровню (level в запросе):
+- breakthrough — сдержанно-весомый, без сенсаций
+- impact — спокойно о сдвиге рынка/отрасли
+- signal — наблюдательный, ранняя стадия
+- failure — фактологично, без драматизации
 
 Return JSON:
 {
   "headline": "оригинальный русский заголовок",
-  "whatHappened": "1-2 предложения",
+  "whatHappened": "1-2 предложения или пустая строка",
   "whyImportant": "1-2 предложения",
   "spheres": "сфера / сфера"
 }`;
@@ -104,13 +117,14 @@ function buildPost(
   const horizon = HORIZON_LABELS[analysis.impactHorizon] ?? analysis.impactHorizon;
   const category = CATEGORY_LABELS[analysis.category] ?? analysis.category;
   const spheres = parts.spheres || category;
+  const whatHappened = parts.whatHappened.trim();
+  const whatBlock = whatHappened
+    ? `\n<b>Что произошло:</b>\n${esc(whatHappened)}\n`
+    : "";
 
   return `${identity.symbol} <b>${esc(identity.label)}</b>
 <b>${esc(parts.headline)}</b>
-
-<b>Что произошло:</b>
-${esc(parts.whatHappened)}
-
+${whatBlock}
 <b>Почему это важно:</b>
 ${esc(parts.whyImportant)}${signalConfirmedBlock}${observationBlock}
 
@@ -161,7 +175,7 @@ export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostPar
   const ruSource = isRussianSource(news);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: config.OPENAI_POST_MODEL,
     temperature: 0.4,
     response_format: { type: "json_object" },
     messages: [
