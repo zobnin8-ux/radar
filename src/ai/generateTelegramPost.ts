@@ -73,18 +73,24 @@ Adjust tone to the maturity level in the user message:
 - signal — observational, early-stage; no triumphalism
 - failure — factual; no dramatization
 
+HEADLINE (mandatory for English sources):
+- NEVER copy the English news title or paper name into headline.
+- Write a Russian hook: what CHANGED, who did what, with a number or name if available.
+- No acronyms like EquiVLA, pdSTL in the headline — translate the idea for a general reader.
+- Max ~120 characters; no clickbait.
+
 CONCRETENESS (mandatory):
 - Description in the user message is the primary source of facts. Pick ONE key fact (number, %, timeline, company/product name, scale, before→after comparison) and anchor the post on it.
 - If the title or description contains a number, percent, deadline, name, scale, or comparison — it MUST appear in whatHappened or whyImportant. Do not replace specifics with vague wording (e.g. "50%" must not become "significantly faster").
 - whatHappened must LEAD with the most concrete or surprising fact, not a generic recap.
-- whyImportant must state a CONSEQUENCE tied to that fact ("what this leads to"), not a hypothetical possibility. Avoid subjunctive mood and filler as the main register: "may significantly", "possibly", "potentially", "in the long term", "could change", "opens the door/opportunities". Occasional uncertainty is OK only when the source is genuinely uncertain — not as a default frame.
+- whyImportant must state a CONSEQUENCE in present or future factual tone ("это ускорит…", "компании перестанут…"), NOT mainly subjunctive ("может", "возможно", "потенциально", "could", "may", "might"). Ban filler: "opens opportunities", "opens the door", "important step in development".
 - Fill keyFact with the single most concrete fact from the source (number/name/scale/comparison), or "" if none exist. You MUST use keyFact in whatHappened and/or whyImportant.
 
 Return JSON:
 {
-  "headline": "Russian headline: convey what CHANGED or became possible, not just describe the event. Colon with a clarifier is OK. No clickbait. Examples — before → after: «ИИ ускоряет планирование стройки в Британии» → «Британия отдала ИИ согласование строек — сроки вдвое»; «New approach to managing LLM agents» → «У ИИ-агентов появился „геном“: поведение можно читать как код»",
+  "headline": "Russian hook headline — see HEADLINE rules above",
   "whatHappened": "1-2 sentences with the concrete fact first, OR empty string if the headline already states the fact and repeating would add nothing",
-  "whyImportant": "1-2 sentences: consequence/trajectory tied to the concrete fact; aligned with impactHorizon; no empty phrases; do NOT restate whatHappened; not mainly subjunctive",
+  "whyImportant": "1-2 sentences: consequence tied to the fact; aligned with impactHorizon; do NOT restate whatHappened; not subjunctive",
   "spheres": "2-3 related spheres in Russian, separated by /",
   "keyFact": "most concrete fact from source or empty string"
 }`;
@@ -134,22 +140,8 @@ export function selectLayout(
   return "compact";
 }
 
-function buildPostFooter(
-  esc: (s: string) => string,
-  horizon: string,
-  spheres: string,
-  source: string,
-  url: string
-): string {
-  return `
-<b>Горизонт влияния:</b>
-${esc(horizon)}
-
-<b>Сферы:</b>
-${esc(spheres)}
-
-<b>Источник:</b> ${esc(source)}
-<b>Ссылка:</b> ${esc(url)}`;
+function buildPostFooter(esc: (s: string) => string, source: string, url: string): string {
+  return `\n<b>Источник:</b> ${esc(source)}\n<b>Ссылка:</b> ${esc(url)}`;
 }
 
 function buildPost(
@@ -161,12 +153,9 @@ function buildPost(
   const { news, analysis } = analyzed;
   const esc = escapeTelegramHtml;
   const identity = VISUAL_IDENTITY[analysis.level];
-  const horizon = HORIZON_LABELS[analysis.impactHorizon] ?? analysis.impactHorizon;
-  const category = CATEGORY_LABELS[analysis.category] ?? analysis.category;
-  const spheres = parts.spheres || category;
   const layout = selectLayout(analysis.level, parts);
   const whatHappened = parts.whatHappened.trim();
-  const footer = buildPostFooter(esc, horizon, spheres, news.source, news.url);
+  const footer = buildPostFooter(esc, news.source, news.url);
 
   if (layout === "compact") {
     return `${identity.symbol} <b>${esc(identity.label)}</b>
@@ -233,6 +222,16 @@ function warnIfKeyFactMissing(parts: PostParts, title: string): void {
   );
 }
 
+function warnIfSubjunctiveWhy(parts: PostParts, title: string): void {
+  const why = parts.whyImportant.trim();
+  if (!why) return;
+  const subjunctive =
+    /^(может|возможно|потенциально|способн|в перспективе|в долгосрочной|открывает (новые )?возможности|может привести|could |may |might |potentially )/i;
+  if (subjunctive.test(why) && !/\d/.test(why)) {
+    logger.warn(`Subjunctive whyImportant for "${title.slice(0, 60)}"`);
+  }
+}
+
 /** Черновик поста (без наблюдателя) — для очереди и публикации */
 export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostParts> {
   const { news, analysis } = analyzed;
@@ -266,6 +265,7 @@ export async function generatePostParts(analyzed: AnalyzedNews): Promise<PostPar
   }
 
   warnIfKeyFactMissing(parts, news.title);
+  warnIfSubjunctiveWhy(parts, news.title);
 
   return parts;
 }

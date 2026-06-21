@@ -6,14 +6,23 @@ import {
 import { loadSettings } from "../storage/settingsStore.js";
 import {
   countPostsToday,
+  count3DNewsPostsToday,
+  countArxivPostsToday,
+  countInterestingEngineeringPostsToday,
   countRuPostsToday,
   getCategoryCountsToday,
   getHorizonCountsToday,
 } from "../storage/publishedStore.js";
-import { MAX_RU_POSTS_PER_DAY } from "../rss/sources.js";
+import { MAX_ARXIV_POSTS_PER_DAY, MAX_3DNEWS_POSTS_PER_DAY } from "../rss/sources.js";
 import { applyRuDailyCap } from "../utils/ruPublicationCap.js";
+import {
+  apply3DNewsDailyCap,
+  applyArxivDailyCap,
+  applyInterestingEngineeringCap,
+} from "../utils/sourcePublicationCap.js";
 import { applyMinAiReserve } from "../utils/minAiQuota.js";
 import { selectForPublication } from "../utils/publicationSelect.js";
+import { selectWithClusterLimits } from "../utils/clusterSelect.js";
 import { logger } from "../utils/logger.js";
 import { publishPosts } from "./publishPosts.js";
 
@@ -47,7 +56,10 @@ export async function publishFromQueue(options: {
   }
 
   const postsToday = await countPostsToday();
-  let ruPostsToday = await countRuPostsToday();
+  const ruPostsToday = await countRuPostsToday();
+  const arxivPostsToday = await countArxivPostsToday();
+  const iePostsToday = await countInterestingEngineeringPostsToday();
+  const threeDNewsPostsToday = await count3DNewsPostsToday();
   const remainingToday = Math.max(0, settings.maxPostsPerDay - postsToday);
   const effectiveLimit = Math.min(limit, remainingToday);
 
@@ -79,8 +91,32 @@ export async function publishFromQueue(options: {
     categoryCounts,
   });
 
-  const queueCap = applyRuDailyCap(minAiQueue.selected, ruPostsToday);
-  const fromQueue = queueCap.items;
+  const clustered = selectWithClusterLimits(minAiQueue.selected, effectiveLimit, {
+    maxPerSource: 1,
+    maxPerCategory: 1,
+    maxPerTechnology: 1,
+  });
+
+  const arxivCap = applyArxivDailyCap(clustered, arxivPostsToday);
+  if (arxivCap.deferred > 0) {
+    logger.info(
+      `arXiv cap (queue): ${arxivCap.deferred} deferred (max ${MAX_ARXIV_POSTS_PER_DAY}/day)`
+    );
+  }
+
+  const ieCap = applyInterestingEngineeringCap(arxivCap.items, iePostsToday);
+  if (ieCap.deferred > 0) {
+    logger.info(`Interesting Engineering cap (queue): ${ieCap.deferred} deferred`);
+  }
+
+  const queueCap = applyRuDailyCap(ieCap.items, ruPostsToday);
+  const threeDCap = apply3DNewsDailyCap(queueCap.items, threeDNewsPostsToday);
+  if (threeDCap.deferred > 0) {
+    logger.info(
+      `3DNews cap (queue): ${threeDCap.deferred} deferred (max ${MAX_3DNEWS_POSTS_PER_DAY}/day)`
+    );
+  }
+  const fromQueue = threeDCap.items;
 
   if (fromQueue.length === 0) {
     return { publishedCount: 0, queueBefore: queueBefore.length, requested: limit };

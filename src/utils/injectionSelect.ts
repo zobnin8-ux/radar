@@ -33,7 +33,9 @@ function pickPass(
     if (pickedUrls.has(item.url)) continue;
 
     const srcUsed = sourceCounts.get(item.source) ?? 0;
-    if (srcUsed >= maxPerSource) continue;
+    const sourceLimit =
+      item.source === "3DNews" ? 1 : maxPerSource;
+    if (srcUsed >= sourceLimit) continue;
 
     if (maxPerCategory !== null) {
       const catUsed = categoryCounts.get(item.category) ?? 0;

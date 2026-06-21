@@ -10,6 +10,8 @@ import {
 } from "../storage/newsStore.js";
 import { isDeviceWithoutImageRejection } from "../utils/deviceImage.js";
 import { meetsQueueMinScore } from "../utils/queueScore.js";
+import { passesReaderHookGate } from "../utils/readerHook.js";
+import { isResearchFeedSource } from "../rss/sources.js";
 import { logger } from "../utils/logger.js";
 
 export async function routeInterestingGadgetRejections(
@@ -53,7 +55,17 @@ export async function routeInterestingGadgetRejections(
     }
     if (await isSeenUrl(item.news.url)) continue;
 
-    if (meetsQueueMinScore(item.analysis.level, item.analysis.score)) {
+    if (isResearchFeedSource(item.news.source)) {
+      await saveObservation(analyzedToObservation(item));
+      logger.info(`Routed to observations (research feed): "${item.news.title}"`);
+      routed++;
+      continue;
+    }
+
+    if (
+      meetsQueueMinScore(item.analysis.level, item.analysis.score, item.news.source) &&
+      passesReaderHookGate(item)
+    ) {
       await saveNewsRecord(analyzedToQueuedRecord(item));
       logger.info(`Routed to queue: "${item.news.title}" (${item.analysis.level})`);
     } else {

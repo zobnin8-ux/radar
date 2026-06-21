@@ -18,17 +18,26 @@ import { meetsQueueMinScore } from "../utils/queueScore.js";
 import { getEnabledSources, loadSettings } from "../storage/settingsStore.js";
 import {
   countPostsToday,
+  countArxivPostsToday,
+  count3DNewsPostsToday,
+  countInterestingEngineeringPostsToday,
   countRuPostsToday,
   getCategoryCountsToday,
   getHorizonCountsToday,
   loadPublished,
 } from "../storage/publishedStore.js";
-import { MAX_RU_POSTS_PER_DAY } from "../rss/sources.js";
+import { MAX_ARXIV_POSTS_PER_DAY, MAX_3DNEWS_POSTS_PER_DAY, MAX_RU_POSTS_PER_DAY, isResearchFeedSource } from "../rss/sources.js";
 import { applyRuDailyCap } from "../utils/ruPublicationCap.js";
+import {
+  applyArxivDailyCap,
+  apply3DNewsDailyCap,
+  applyInterestingEngineeringCap,
+} from "../utils/sourcePublicationCap.js";
+import { selectWithClusterLimits } from "../utils/clusterSelect.js";
+import { passesReaderHookGate } from "../utils/readerHook.js";
 import { applyMinAiReserve } from "../utils/minAiQuota.js";
 import { selectForPublication } from "../utils/publicationSelect.js";
 import { pruneRssErrors, recordLastRun, setPipelineRunning } from "../storage/stateStore.js";
-import type { AnalyzedNews } from "../types.js";
 import { dedupeNews } from "../utils/dedupe.js";
 import { filterByContentPolicy } from "../filters/contentPolicy.js";
 import { prefilterNews } from "../utils/prefilter.js";
@@ -102,6 +111,9 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
 
     const postsToday = await countPostsToday();
     let ruPostsToday = await countRuPostsToday();
+    let arxivPostsToday = await countArxivPostsToday();
+    let iePostsToday = await countInterestingEngineeringPostsToday();
+    let threeDNewsPostsToday = await count3DNewsPostsToday();
     const remainingToday = settings.maxPostsPerDay - postsToday;
     const postsThisRun =
       remainingToday > 0
@@ -127,6 +139,8 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
       );
     }
     logger.info(`RU sources cap: max ${MAX_RU_POSTS_PER_DAY}/day (today: ${ruPostsToday})`);
+    logger.info(`arXiv cap: max ${MAX_ARXIV_POSTS_PER_DAY}/day (today: ${arxivPostsToday})`);
+    logger.info(`3DNews cap: max ${MAX_3DNEWS_POSTS_PER_DAY}/day (today: ${threeDNewsPostsToday})`);
 
     if (!dryRun) {
       const pruned = await maintainPublicationQueue();
@@ -285,13 +299,37 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
 
     const queueEligible: typeof publishable = [];
     const belowThreshold: typeof publishable = [];
+    const hookDeferred: typeof publishable = [];
 
     for (const item of publishable) {
-      if (meetsQueueMinScore(item.analysis.level, item.analysis.score)) {
-        queueEligible.push(item);
-      } else {
-        belowThreshold.push(item);
+      if (isResearchFeedSource(item.news.source)) {
+        if (!dryRun) {
+          await saveObservation(analyzedToObservation(item));
+        }
+        observationsSaved++;
+        logger.info(`Research track (arXiv → observation): "${item.news.title}"`);
+        continue;
       }
+
+      if (!meetsQueueMinScore(item.analysis.level, item.analysis.score, item.news.source)) {
+        belowThreshold.push(item);
+        continue;
+      }
+
+      if (!passesReaderHookGate(item)) {
+        hookDeferred.push(item);
+        continue;
+      }
+
+      queueEligible.push(item);
+    }
+
+    for (const item of hookDeferred) {
+      if (!dryRun) {
+        await saveObservation(analyzedToObservation(item));
+      }
+      observationsSaved++;
+      logger.info(`Hook gate (→ observation): "${item.news.title}"`);
     }
 
     for (const item of belowThreshold) {
@@ -348,13 +386,39 @@ export async function runPipeline(options: RunOptions): Promise<PipelineResult> 
     if (minAiNew.injected) {
       logger.info(`AI minimum: reserved slot for "${minAiNew.title}"`);
     }
-    const newCap = applyRuDailyCap(minAiNew.selected, ruPostsToday);
+
+    const clustered = selectWithClusterLimits(minAiNew.selected, slotsLeft, {
+      maxPerSource: 1,
+      maxPerCategory: 1,
+      maxPerTechnology: 1,
+    });
+
+    const arxivCap = applyArxivDailyCap(clustered, arxivPostsToday);
+    if (arxivCap.deferred > 0) {
+      logger.info(
+        `arXiv cap: ${arxivCap.deferred} deferred (max ${MAX_ARXIV_POSTS_PER_DAY}/day)`
+      );
+    }
+
+    const ieCap = applyInterestingEngineeringCap(arxivCap.items, iePostsToday);
+    if (ieCap.deferred > 0) {
+      logger.info(`Interesting Engineering cap: ${ieCap.deferred} deferred`);
+    }
+
+    const newCap = applyRuDailyCap(ieCap.items, ruPostsToday);
     if (newCap.deferred > 0) {
       logger.info(
         `RU cap: ${newCap.deferred} new item(s) deferred (max ${MAX_RU_POSTS_PER_DAY}/day)`
       );
     }
-    const toPublish = newCap.items;
+
+    const threeDCap = apply3DNewsDailyCap(newCap.items, threeDNewsPostsToday);
+    if (threeDCap.deferred > 0) {
+      logger.info(
+        `3DNews cap: ${threeDCap.deferred} deferred (max ${MAX_3DNEWS_POSTS_PER_DAY}/day)`
+      );
+    }
+    const toPublish = threeDCap.items;
     queuedNew = Math.max(0, queueEligible.length - toPublish.length);
 
     await updateProgress("select", {

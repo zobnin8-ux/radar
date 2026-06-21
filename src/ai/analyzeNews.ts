@@ -212,6 +212,11 @@ Level calibration examples:
 - Company ships feature to millions of paying users → impact.
 - First time a long-standing barrier is crossed in science/engineering → breakthrough.
 
+arXiv and preprint papers:
+- Default level: observation (not signal). Only signal if clear pilot, deployment, or industry adoption in title/description.
+- score 8–10 is RARE for arXiv; typical range 5–7 unless tier-1 company blog cross-post.
+- Do not inflate score because topic is "hot" (LLM, robotics, VLA).
+
 Do not assign signal by default when impact or breakthrough criteria are met.
 
 CONTENT POLICY (mandatory, overrides everything):
@@ -261,7 +266,7 @@ async function analyzeBatch(batch: NewsItem[]): Promise<AnalyzedNews[]> {
 
   const response = await openai.chat.completions.create({
     model: config.OPENAI_ANALYSIS_MODEL,
-    temperature: 0.2,
+    temperature: 0.35,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: SYSTEM_PROMPT },

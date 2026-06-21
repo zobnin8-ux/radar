@@ -1,7 +1,7 @@
 {
-  "maxPostsPerDay": 18,
-  "maxPostsPerRun": 3,
-  "categoryQuotaMax": 4,
+  "maxPostsPerDay": 10,
+  "maxPostsPerRun": 2,
+  "categoryQuotaMax": 2,
   "horizonMixPercent": 30,
   "minAiPostsPerDay": 1,
   "postIntervalCron": "15 */6 * * *",
@@ -53,14 +53,6 @@
     {
       "name": "Meta AI",
       "url": "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_meta_ai.xml",
-      "tier": 1,
-      "trustScore": 1,
-      "group": "ai",
-      "enabled": true
-    },
-    {
-      "name": "Microsoft AI",
-      "url": "https://blogs.microsoft.com/ai/feed/",
       "tier": 1,
       "trustScore": 1,
       "group": "ai",
@@ -152,7 +144,7 @@
       "tier": 1,
       "trustScore": 1,
       "group": "ai",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "arXiv Robotics",
@@ -160,7 +152,7 @@
       "tier": 1,
       "trustScore": 1,
       "group": "robotics",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "TechCrunch",

@@ -28,7 +28,7 @@ function defaultSettings(): AppSettings {
   return {
     maxPostsPerDay: config.MAX_POSTS_PER_DAY,
     maxPostsPerRun: config.MAX_POSTS_PER_RUN,
-    categoryQuotaMax: 4,
+    categoryQuotaMax: 2,
     horizonMixPercent: 30,
     minAiPostsPerDay: 1,
     postIntervalCron: config.POST_INTERVAL_CRON,
@@ -62,7 +62,7 @@ export async function loadSettings(): Promise<AppSettings> {
     cache.rssSources = mergeRssSources(parsed.rssSources);
   }
   if (cache.categoryQuotaMax === undefined) {
-    cache.categoryQuotaMax = 4;
+    cache.categoryQuotaMax = 2;
   }
   if (cache.horizonMixPercent === undefined) {
     cache.horizonMixPercent = 30;

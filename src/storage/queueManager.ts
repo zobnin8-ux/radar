@@ -4,6 +4,7 @@ import {
   computeExpiresAt,
   meetsQueueMinScore,
   refreshQueueScores,
+  refreshQueueScoresInBatch,
 } from "../utils/queueScore.js";
 import { logger } from "../utils/logger.js";
 import { config } from "../config.js";
@@ -83,7 +84,7 @@ export async function processQueueRecords(
 
     const normalized = normalizeQueueRecord(record);
 
-    if (!meetsQueueMinScore(normalized.level, normalized.score)) {
+    if (!meetsQueueMinScore(normalized.level, normalized.score, normalized.source)) {
       belowThreshold++;
       await moveToObservation(
         normalized,
@@ -99,12 +100,17 @@ export async function processQueueRecords(
       continue;
     }
 
-    const refreshed = refreshQueueScores(normalized);
-    if (refreshed.finalScore !== normalized.finalScore) {
+    activeQueue.push(normalized);
+  }
+
+  const refreshedQueue = refreshQueueScoresInBatch(activeQueue);
+  for (let i = 0; i < refreshedQueue.length; i++) {
+    if (refreshedQueue[i].finalScore !== activeQueue[i].finalScore) {
       scoresUpdated++;
     }
-    activeQueue.push(refreshed);
   }
+  activeQueue.length = 0;
+  activeQueue.push(...refreshedQueue);
 
   activeQueue.sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0));
 

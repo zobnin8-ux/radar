@@ -1,7 +1,10 @@
 import { getPublishQueue, recordToAnalyzed } from "../storage/newsStore.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import { recordLastRun } from "../storage/stateStore.js";
+import { count3DNewsPostsToday } from "../storage/publishedStore.js";
+import { MAX_3DNEWS_POSTS_PER_DAY } from "../rss/sources.js";
 import { formatSourceList, selectForInjection } from "../utils/injectionSelect.js";
+import { apply3DNewsDailyCap } from "../utils/sourcePublicationCap.js";
 import { logger } from "../utils/logger.js";
 import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
 import { endTask, isPipelineRunning, tryBeginTask } from "./activeTask.js";
@@ -85,19 +88,48 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
       requested
     );
     const candidates = picked.map((record) => recordToAnalyzed(record));
-    const sourceSummary = formatSourceList(picked);
+    const threeDNewsPostsToday = await count3DNewsPostsToday();
+    const threeDCap = apply3DNewsDailyCap(candidates, threeDNewsPostsToday);
+    if (threeDCap.deferred > 0) {
+      logger.info(
+        `3DNews cap (injection): ${threeDCap.deferred} deferred (max ${MAX_3DNEWS_POSTS_PER_DAY}/day)`
+      );
+    }
+    const toPublish = threeDCap.items;
+    const sourceSummary = formatSourceList(
+      picked.filter((record) => toPublish.some((item) => item.news.url === record.url))
+    );
+
+    if (toPublish.length === 0) {
+      const message = `Лимит 3DNews на сегодня (${MAX_3DNEWS_POSTS_PER_DAY}/день) — нечего публиковать из отбора`;
+      logger.info(`Injection: ${message}`);
+      await progress.done({ published: 0, detail: message });
+      await recordLastRun({
+        trigger: options.trigger,
+        success: true,
+        publishedCount: 0,
+        message: `Инъекция: ${message}`,
+      });
+      return {
+        success: true,
+        publishedCount: 0,
+        requested,
+        queueBefore,
+        message,
+      };
+    }
 
     await updateProgress("select", {
-      current: picked.length,
+      current: toPublish.length,
       total: requested,
-      detail: sourceSummary.slice(0, 80) || `${picked.length} из очереди`,
+      detail: sourceSummary.slice(0, 80) || `${toPublish.length} из очереди`,
     });
 
     logger.info(
-      `Injection (${options.trigger}): ${picked.length} selected (max ${maxPerSource}/source, ${maxPerCategory}/category) from ${queueBefore} in queue — ${sourceSummary || "—"}`
+      `Injection (${options.trigger}): ${toPublish.length} selected (max ${maxPerSource}/source, ${maxPerCategory}/category) from ${queueBefore} in queue — ${sourceSummary || "—"}`
     );
 
-    const publishedCount = await publishPosts(candidates, {
+    const publishedCount = await publishPosts(toPublish, {
       dryRun,
       postType: "injection",
       onProgress: (current, total, title) =>
@@ -106,9 +138,9 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
 
     const sourcesNote = sourceSummary ? ` Источники: ${sourceSummary}.` : "";
     const message = dryRun
-      ? `Dry-run инъекция: ${publishedCount} из ${picked.length} (очередь ${queueBefore})${sourcesNote}`
+      ? `Dry-run инъекция: ${publishedCount} из ${toPublish.length} (очередь ${queueBefore})${sourcesNote}`
       : publishedCount < requested
-        ? `Инъекция: опубликовано ${publishedCount} из ${requested} (отобрано ${picked.length}, очередь ${queueBefore})${sourcesNote}`
+        ? `Инъекция: опубликовано ${publishedCount} из ${requested} (отобрано ${toPublish.length}, очередь ${queueBefore})${sourcesNote}`
         : `Инъекция: опубликовано ${publishedCount}${sourcesNote}`;
 
     logger.info(message);

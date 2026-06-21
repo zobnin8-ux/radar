@@ -95,6 +95,24 @@ const RULES: Rule[] = [
     minTier: 2,
     test: (_t, url) => /\/(deals|sponsored|coupons|shopping)\//i.test(url),
   },
+  {
+    id: "nasa_ops_blog",
+    minTier: 1,
+    test: (t, url) =>
+      /nasa\.gov/i.test(url) &&
+      (/\bblog\b/i.test(t) ||
+        /\bsols?\s+\d+/i.test(t) ||
+        /field\s+test/i.test(t) ||
+        /desert\s+field/i.test(t) ||
+        /surveying\s+the\s+bands/i.test(t)),
+  },
+  {
+    id: "paper_acronym_title",
+    minTier: 1,
+    test: (t) =>
+      /\b[A-Z][a-z]*[A-Z][A-Za-z0-9]*\s*:/.test(t) ||
+      /^[A-Z][a-z]+[A-Z][A-Za-z0-9]*\s*:/.test(t.trim()),
+  },
 ];
 
 const REASON_LABELS: Record<string, string> = {
@@ -110,6 +128,8 @@ const REASON_LABELS: Record<string, string> = {
   lifestyle: "лайфстайл",
   gaming: "игры/скидки",
   url_deals: "рекламный URL",
+  nasa_ops_blog: "операционный NASA blog",
+  paper_acronym_title: "название paper (акроним)",
 };
 
 function itemText(item: NewsItem): string {

@@ -40,7 +40,6 @@ const TIER1_SOURCES: RssSource[] = [
   { name: "Google AI", url: "https://blog.google/technology/ai/rss/", tier: 1, trustScore: 1.0, group: "ai" },
   { name: "Google Research", url: "https://research.google/blog/rss/", tier: 1, trustScore: 1.0, group: "ai" },
   { name: "Meta AI", url: `${RSS_MIRROR}/feed_meta_ai.xml`, tier: 1, trustScore: 1.0, group: "ai" },
-  { name: "Microsoft AI", url: "https://blogs.microsoft.com/ai/feed/", tier: 1, trustScore: 1.0, group: "ai" },
   { name: "Mistral AI", url: `${RSS_MIRROR}/feed_mistral.xml`, tier: 1, trustScore: 1.0, group: "ai" },
   { name: "xAI", url: `${RSS_MIRROR}/feed_xainews.xml`, tier: 1, trustScore: 1.0, group: "ai" },
   { name: "Cohere", url: `${RSS_MIRROR}/feed_cohere.xml`, tier: 1, trustScore: 1.0, group: "ai" },
@@ -121,6 +120,31 @@ const RU_TIER2_SOURCES: RssSource[] = [
 
 /** Макс. постов из RU-источников в день — дополнительный контур, не основная повестка */
 export const MAX_RU_POSTS_PER_DAY = 2;
+
+/** Макс. arXiv в канал в день (остальное — research track / наблюдения) */
+export const MAX_ARXIV_POSTS_PER_DAY = 2;
+
+/** Макс. постов из «глянцевых» tier-2 в день */
+export const MAX_INTERESTING_ENGINEERING_POSTS_PER_DAY = 1;
+
+/** Макс. постов из 3DNews в день (включая инъекции) */
+export const MAX_3DNEWS_POSTS_PER_DAY = 2;
+
+export function is3DNewsSourceName(sourceName: string): boolean {
+  return sourceName === "3DNews";
+}
+
+export function isArxivSourceName(sourceName: string): boolean {
+  return /^arXiv\b/i.test(sourceName);
+}
+
+export function isResearchFeedSource(sourceName: string): boolean {
+  return isArxivSourceName(sourceName);
+}
+
+export function isInterestingEngineeringSource(sourceName: string): boolean {
+  return sourceName === "Interesting Engineering";
+}
 
 export const DEFAULT_RSS_SOURCES: RssSource[] = [
   ...TIER1_SOURCES,

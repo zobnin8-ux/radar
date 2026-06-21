@@ -4,7 +4,12 @@ import type { Category, ImpactHorizon, PublishedRecord } from "../types.js";
 import { isFutureHorizon } from "../utils/publicationSelect.js";
 import { CATEGORIES } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
-import { isRussianSourceName } from "../rss/sources.js";
+import {
+  is3DNewsSourceName,
+  isRussianSourceName,
+  isArxivSourceName,
+  isInterestingEngineeringSource,
+} from "../rss/sources.js";
 import { logger } from "../utils/logger.js";
 
 const DATA_PATH = join(process.cwd(), "data", "published.json");
@@ -74,6 +79,38 @@ export async function countRuPostsToday(now = new Date()): Promise<number> {
       isQuotaPost(r) &&
       isSameCalendarDay(new Date(r.postedAt), now) &&
       isRussianSourceName(r.source)
+  ).length;
+}
+
+export async function countArxivPostsToday(now = new Date()): Promise<number> {
+  const records = await loadPublished();
+  return records.filter(
+    (r) =>
+      isQuotaPost(r) &&
+      isSameCalendarDay(new Date(r.postedAt), now) &&
+      isArxivSourceName(r.source)
+  ).length;
+}
+
+export async function countInterestingEngineeringPostsToday(now = new Date()): Promise<number> {
+  const records = await loadPublished();
+  return records.filter(
+    (r) =>
+      isQuotaPost(r) &&
+      isSameCalendarDay(new Date(r.postedAt), now) &&
+      isInterestingEngineeringSource(r.source)
+  ).length;
+}
+
+export async function count3DNewsPostsToday(now = new Date()): Promise<number> {
+  const records = await loadPublished();
+  return records.filter(
+    (r) =>
+      r.postType !== "digest" &&
+      r.postType !== "trends" &&
+      r.postType !== "github-trends" &&
+      isSameCalendarDay(new Date(r.postedAt), now) &&
+      is3DNewsSourceName(r.source)
   ).length;
 }
 

@@ -18,7 +18,7 @@ const envSchema = z.object({
   TELEGRAM_CHANNEL_ID: z.string().optional(),
   TELEGRAM_ADMIN_USER_ID: z.coerce.number().int().positive().optional(),
   MAX_POSTS_PER_DAY: z.coerce.number().int().positive().default(10),
-  MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(3),
+  MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(2),
   POST_INTERVAL_CRON: z.string().default(DEFAULT_POST_INTERVAL_CRON),
   PUBLISH_INTERVAL_CRON: z.string().default(DEFAULT_PUBLISH_INTERVAL_CRON),
   WEEKLY_TRENDS_CRON: z.string().default(DEFAULT_WEEKLY_TRENDS_CRON),
@@ -54,7 +54,7 @@ const envSchema = z.object({
   /** Ранний гейт: что попадает в observations и очередь после AI-анализа */
   MIN_TRACK_SCORE: z.coerce.number().int().min(1).max(10).default(6),
   /** Вероятность блока «Наблюдение» для постов уровня signal (0–1) */
-  OBSERVER_SIGNAL_RATE: z.coerce.number().min(0).max(1).default(0.45),
+  OBSERVER_SIGNAL_RATE: z.coerce.number().min(0).max(1).default(0.1),
   OPENAI_POST_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.55),
 });
 
