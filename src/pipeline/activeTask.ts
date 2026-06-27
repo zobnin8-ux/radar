@@ -20,9 +20,12 @@ export function isInjectionRunning(): boolean {
   return active === "injection";
 }
 
-export function isPublishRunning(): boolean {
+export function isBatchPublishRunning(): boolean {
   return active === "publish";
 }
+
+/** @deprecated use isBatchPublishRunning */
+export const isPublishRunning = isBatchPublishRunning;
 
 export function isAnyTaskRunning(): boolean {
   return active !== null;

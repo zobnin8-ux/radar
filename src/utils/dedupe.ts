@@ -1,4 +1,5 @@
 import type { NewsItem } from "../types.js";
+import { normalizeProductUrl } from "./productUrl.js";
 
 function normalizeTitle(title: string): string {
   return title
@@ -28,7 +29,7 @@ export function dedupeByUrl(items: NewsItem[]): NewsItem[] {
   const result: NewsItem[] = [];
 
   for (const item of items) {
-    const normalizedUrl = item.url.trim().toLowerCase();
+    const normalizedUrl = normalizeProductUrl(item.url);
     if (!normalizedUrl || seen.has(normalizedUrl)) continue;
     seen.add(normalizedUrl);
     result.push(item);

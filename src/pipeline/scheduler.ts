@@ -5,31 +5,11 @@ import { CRON_SCHEDULE_SUMMARY } from "../utils/cronSchedule.js";
 import { logger } from "../utils/logger.js";
 import { runWithAdminTelegramProgress } from "../telegram/progressReporter.js";
 import { isAnyTaskRunning } from "./activeTask.js";
-import { ingestGitTrendReport } from "./ingestGitTrendReport.js";
+import { runBatchPublish } from "./runBatchPublish.js";
 import { runPipeline } from "./runPipeline.js";
-import { runPublishTick } from "./runPublishTick.js";
-import { isInTheBoxRunning, runWeeklyInTheBox } from "./runWeeklyInTheBox.js";
-import { isGitTrendRunning, runWeeklyGitTrend } from "./runWeeklyGitTrend.js";
-import { isWeirdGitHubRunning, runWeeklyWeirdGitHub } from "./runWeeklyWeirdGitHub.js";
-import { isTrendsRunning, runWeeklyTrends } from "./runWeeklyTrends.js";
 
-let scheduledTask: cron.ScheduledTask | null = null;
-let publishTask: cron.ScheduledTask | null = null;
-let trendsTask: cron.ScheduledTask | null = null;
-let gitTrendIngestTask: cron.ScheduledTask | null = null;
-let gitTrendTask: cron.ScheduledTask | null = null;
-let weirdGitHubTask: cron.ScheduledTask | null = null;
-let inTheBoxTask: cron.ScheduledTask | null = null;
-
-export async function startScheduler(): Promise<void> {
-  await reschedule();
-  startWeeklyInTheBoxScheduler();
-  startWeeklyTrendsScheduler();
-  startWeeklyGitTrendIngestScheduler();
-  startWeeklyGitTrendScheduler();
-  startWeeklyWeirdGitHubScheduler();
-  logger.info(`Cron grid (local): ${CRON_SCHEDULE_SUMMARY}`);
-}
+let rssTask: cron.ScheduledTask | null = null;
+let batchTasks: cron.ScheduledTask[] = [];
 
 function stopCronTask(task: cron.ScheduledTask | null): null {
   if (task) {
@@ -39,219 +19,88 @@ function stopCronTask(task: cron.ScheduledTask | null): null {
 }
 
 export function stopScheduler(): void {
-  scheduledTask = stopCronTask(scheduledTask);
-  publishTask = stopCronTask(publishTask);
-  trendsTask = stopCronTask(trendsTask);
-  gitTrendIngestTask = stopCronTask(gitTrendIngestTask);
-  gitTrendTask = stopCronTask(gitTrendTask);
-  weirdGitHubTask = stopCronTask(weirdGitHubTask);
-  inTheBoxTask = stopCronTask(inTheBoxTask);
+  rssTask = stopCronTask(rssTask);
+  for (const task of batchTasks) {
+    task.stop();
+  }
+  batchTasks = [];
   logger.info("Schedulers stopped");
+}
+
+function scheduleBatchCron(cronExpr: string, label: string): void {
+  if (!cron.validate(cronExpr)) {
+    logger.error(`Invalid batch cron (${label}): ${cronExpr}`);
+    return;
+  }
+
+  const task = cron.schedule(cronExpr, async () => {
+    const current = await loadSettings();
+    if (current.paused) {
+      logger.info(`Batch publish (${label}) skipped — bot is paused`);
+      return;
+    }
+    if (isAnyTaskRunning()) {
+      logger.info(`Batch publish (${label}) skipped — another task running`);
+      return;
+    }
+
+    const result = await runBatchPublish({
+      count: current.batchSize ?? config.BATCH_SIZE,
+      trigger: "cron",
+    });
+    if (result.publishedCount > 0) {
+      logger.info(`Batch (${label}): ${result.message}`);
+    }
+  });
+
+  batchTasks.push(task);
+  logger.info(`Batch scheduler (${label}): ${cronExpr}`);
+}
+
+export async function startScheduler(): Promise<void> {
+  await reschedule();
+  logger.info(`Cron grid (local): ${CRON_SCHEDULE_SUMMARY}`);
 }
 
 export async function reschedule(): Promise<void> {
   const settings = await loadSettings();
 
-  scheduledTask = stopCronTask(scheduledTask);
-  publishTask = stopCronTask(publishTask);
+  rssTask = stopCronTask(rssTask);
+  for (const task of batchTasks) {
+    task.stop();
+  }
+  batchTasks = [];
 
   if (!cron.validate(settings.postIntervalCron)) {
-    logger.error(`Invalid RSS cron expression: ${settings.postIntervalCron}`);
+    logger.error(`Invalid product collect cron: ${settings.postIntervalCron}`);
     return;
   }
 
-  scheduledTask = cron.schedule(settings.postIntervalCron, async () => {
+  rssTask = cron.schedule(settings.postIntervalCron, async () => {
     const current = await loadSettings();
     if (current.paused) {
-      logger.info("RSS scheduler skipped — bot is paused");
+      logger.info("Product collect scheduler skipped — bot is paused");
       return;
     }
     if (isAnyTaskRunning()) {
-      logger.info("RSS scheduler skipped — another task already running");
+      logger.info("Product collect scheduler skipped — another task already running");
       return;
     }
     const result = await runWithAdminTelegramProgress({
       task: "pipeline",
       dryRun: current.dryRun,
-      title: "🔄 RSS по расписанию",
+      title: "🔄 Сбор товаров по расписанию",
       run: () => runPipeline({ trigger: "cron" }),
     });
     if (!result.success) {
-      logger.warn(`Scheduled RSS pipeline: ${result.message}`);
+      logger.warn(`Scheduled product collect: ${result.message}`);
     }
   });
 
-  logger.info(
-    `RSS scheduler active: ${settings.postIntervalCron}` +
-      (settings.publishEvenSpread ? " (collect-only, even publish)" : "")
-  );
+  logger.info(`Product collect scheduler: ${settings.postIntervalCron}`);
 
-  if (settings.publishEvenSpread) {
-    if (!cron.validate(settings.publishIntervalCron)) {
-      logger.error(`Invalid publish cron: ${settings.publishIntervalCron}`);
-      return;
-    }
-
-    publishTask = cron.schedule(settings.publishIntervalCron, async () => {
-      const current = await loadSettings();
-      if (current.paused) {
-        logger.debug("Publish tick skipped — bot is paused");
-        return;
-      }
-      if (isAnyTaskRunning()) {
-        logger.debug("Publish tick skipped — another task running");
-        return;
-      }
-      const result = await runPublishTick({ trigger: "cron" });
-      if (result.publishedCount > 0) {
-        logger.info(`Publish tick: ${result.message}`);
-      }
-    });
-
-    logger.info(`Publish scheduler active: ${settings.publishIntervalCron} (even spread)`);
-  }
-}
-
-function startWeeklyInTheBoxScheduler(): void {
-  const cronExpr = config.WEEKLY_IN_THE_BOX_CRON;
-  if (!cron.validate(cronExpr)) {
-    logger.error(`Invalid in-the-box cron: ${cronExpr}`);
-    return;
-  }
-
-  inTheBoxTask = cron.schedule(cronExpr, async () => {
-    const current = await loadSettings();
-    if (current.paused) {
-      logger.info("In-the-box rubric skipped — bot is paused");
-      return;
-    }
-    if (
-      isAnyTaskRunning() ||
-      isInTheBoxRunning() ||
-      isTrendsRunning() ||
-      isGitTrendRunning() ||
-      isWeirdGitHubRunning()
-    ) {
-      logger.info("In-the-box rubric skipped — another task running");
-      return;
-    }
-    await runWeeklyInTheBox({ trigger: "cron" });
-  });
-
-  logger.info(`In-the-box scheduler: ${cronExpr} (Wed & Sat 10:25 local)`);
-}
-
-function startWeeklyTrendsScheduler(): void {
-  const cronExpr = config.WEEKLY_TRENDS_CRON;
-  if (!cron.validate(cronExpr)) {
-    logger.error(`Invalid weekly trends cron: ${cronExpr}`);
-    return;
-  }
-
-  trendsTask = cron.schedule(cronExpr, async () => {
-    const current = await loadSettings();
-    if (current.paused) {
-      logger.info("Weekly trends skipped — bot is paused");
-      return;
-    }
-    if (
-      isAnyTaskRunning() ||
-      isTrendsRunning() ||
-      isInTheBoxRunning() ||
-      isGitTrendRunning() ||
-      isWeirdGitHubRunning()
-    ) {
-      logger.info("Weekly trends skipped — another task running");
-      return;
-    }
-    await runWeeklyTrends();
-  });
-
-  logger.info(`Weekly trends scheduler: ${cronExpr} (Sunday 11:20 local)`);
-}
-
-function startWeeklyGitTrendIngestScheduler(): void {
-  const cronExpr = config.WEEKLY_GITTREND_INGEST_CRON;
-  if (!cron.validate(cronExpr)) {
-    logger.error(`Invalid GitTrend ingest cron: ${cronExpr}`);
-    return;
-  }
-
-  gitTrendIngestTask = cron.schedule(cronExpr, async () => {
-    const current = await loadSettings();
-    if (current.paused) {
-      logger.info("GitTrend ingest skipped — bot is paused");
-      return;
-    }
-    if (isAnyTaskRunning() || isGitTrendRunning() || isWeirdGitHubRunning()) {
-      logger.info("GitTrend ingest skipped — another task running");
-      return;
-    }
-    const result = await ingestGitTrendReport();
-    if (result.success) {
-      logger.info(`GitTrend ingest: ${result.message}${result.notified ? " (notified)" : ""}`);
-    } else {
-      logger.warn(`GitTrend ingest failed: ${result.message}`);
-    }
-  });
-
-  logger.info(`GitTrend ingest scheduler: ${cronExpr} (Saturday 22:00 local, after GitRend 21:00 MSK)`);
-}
-
-function startWeeklyGitTrendScheduler(): void {
-  const cronExpr = config.WEEKLY_GITTREND_CRON;
-  if (!cron.validate(cronExpr)) {
-    logger.error(`Invalid GitTrend cron: ${cronExpr}`);
-    return;
-  }
-
-  gitTrendTask = cron.schedule(cronExpr, async () => {
-    const current = await loadSettings();
-    if (current.paused) {
-      logger.info("GitTrend rubric skipped — bot is paused");
-      return;
-    }
-    if (
-      isAnyTaskRunning() ||
-      isGitTrendRunning() ||
-      isTrendsRunning() ||
-      isInTheBoxRunning() ||
-      isWeirdGitHubRunning()
-    ) {
-      logger.info("GitTrend rubric skipped — another task running");
-      return;
-    }
-    await runWeeklyGitTrend();
-  });
-
-  logger.info(`GitTrend scheduler: ${cronExpr} (Sunday publish from Saturday ingest)`);
-}
-
-function startWeeklyWeirdGitHubScheduler(): void {
-  const cronExpr = config.WEEKLY_WEIRD_GITHUB_CRON;
-  if (!cron.validate(cronExpr)) {
-    logger.error(`Invalid Weird GitHub cron: ${cronExpr}`);
-    return;
-  }
-
-  weirdGitHubTask = cron.schedule(cronExpr, async () => {
-    const current = await loadSettings();
-    if (current.paused) {
-      logger.info("Weird GitHub rubric skipped — bot is paused");
-      return;
-    }
-    if (
-      isAnyTaskRunning() ||
-      isWeirdGitHubRunning() ||
-      isGitTrendRunning() ||
-      isTrendsRunning() ||
-      isInTheBoxRunning()
-    ) {
-      logger.info("Weird GitHub rubric skipped — another task running");
-      return;
-    }
-    await runWeeklyWeirdGitHub();
-  });
-
-  logger.info(`Weird GitHub scheduler: ${cronExpr} (Sunday evening, GitTrend weirdFindOfTheWeek)`);
+  scheduleBatchCron(settings.batchCronMorning, "morning");
+  scheduleBatchCron(settings.batchCronDay, "day");
+  scheduleBatchCron(settings.batchCronEvening, "evening");
+  scheduleBatchCron(settings.batchCronNight, "night");
 }

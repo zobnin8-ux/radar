@@ -259,8 +259,10 @@ Use exact enum values only:
 
 Score = significance within level. Boost score modestly (+1 max) for tier 1 primary sources on genuinely relevant tech news.`;
 
-async function analyzeBatch(batch: NewsItem[]): Promise<AnalyzedNews[]> {
-  if (batch.length === 0) return [];
+async function analyzeBatch(
+  batch: NewsItem[]
+): Promise<{ items: AnalyzedNews[]; lowScoreSkipped: number }> {
+  if (batch.length === 0) return { items: [], lowScoreSkipped: 0 };
 
   logger.info(`OpenAI: analyzing ${batch.length} news items...`);
 
@@ -297,6 +299,7 @@ async function analyzeBatch(batch: NewsItem[]): Promise<AnalyzedNews[]> {
   }
 
   const results: AnalyzedNews[] = [];
+  let lowScoreSkipped = 0;
 
   for (const entry of entries) {
     const news = batch[entry.index];
@@ -311,13 +314,14 @@ async function analyzeBatch(batch: NewsItem[]): Promise<AnalyzedNews[]> {
 
     if (analysis.score < MIN_TRACK_SCORE) {
       logger.debug(`Skipped "${news.title}" — score ${analysis.score}`);
+      lowScoreSkipped++;
       continue;
     }
 
     results.push({ news, analysis });
   }
 
-  return results;
+  return { items: results, lowScoreSkipped };
 }
 
 function sortByWeightedPriority(items: AnalyzedNews[]): AnalyzedNews[] {
@@ -347,6 +351,9 @@ export function isPublishable(item: AnalyzedNews): boolean {
 export interface AnalysisResult {
   publishable: AnalyzedNews[];
   observations: AnalyzedNews[];
+  lowScoreSkipped: number;
+  failedBatches: number;
+  failedItems: number;
 }
 
 export async function analyzeForPipeline(
@@ -356,6 +363,9 @@ export async function analyzeForPipeline(
   const publishable: AnalyzedNews[] = [];
   const observations: AnalyzedNews[] = [];
   const seenUrls = new Set<string>();
+  let lowScoreSkipped = 0;
+  let failedBatches = 0;
+  let failedItems = 0;
   const limit = Math.min(candidates.length, MAX_ANALYZE_PER_RUN);
   const totalBatches = Math.ceil(limit / BATCH_SIZE);
 
@@ -367,10 +377,14 @@ export async function analyzeForPipeline(
 
     let results: AnalyzedNews[] = [];
     try {
-      results = await analyzeBatch(batch);
+      const batchResult = await analyzeBatch(batch);
+      results = batchResult.items;
+      lowScoreSkipped += batchResult.lowScoreSkipped;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.warn(`Analysis batch ${batchNum} failed, continuing: ${msg}`);
+      failedBatches++;
+      failedItems += batch.length;
       continue;
     }
 
@@ -403,6 +417,9 @@ export async function analyzeForPipeline(
   return {
     publishable: sortByWeightedPriority(publishable),
     observations: sortByWeightedPriority(observations),
+    lowScoreSkipped,
+    failedBatches,
+    failedItems,
   };
 }
 

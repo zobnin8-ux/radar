@@ -1,16 +1,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Category, ImpactHorizon, PublishedRecord } from "../types.js";
-import { isFutureHorizon } from "../utils/publicationSelect.js";
+import type { Category, PublishedRecord } from "../types.js";
 import { CATEGORIES } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
-import {
-  is3DNewsSourceName,
-  isRussianSourceName,
-  isArxivSourceName,
-  isInterestingEngineeringSource,
-} from "../rss/sources.js";
 import { logger } from "../utils/logger.js";
+import { normalizeProductUrl } from "../utils/productUrl.js";
 
 const DATA_PATH = join(process.cwd(), "data", "published.json");
 
@@ -43,18 +37,12 @@ export async function savePublished(records: PublishedRecord[]): Promise<void> {
 
 export async function isAlreadyPublished(url: string): Promise<boolean> {
   const records = await loadPublished();
-  const normalized = url.trim().toLowerCase();
-  return records.some((r) => r.url.trim().toLowerCase() === normalized);
+  const normalized = normalizeProductUrl(url);
+  return records.some((r) => normalizeProductUrl(r.url) === normalized);
 }
 
 function isQuotaPost(record: PublishedRecord): boolean {
-  return (
-    record.postType !== "digest" &&
-    record.postType !== "trends" &&
-    record.postType !== "injection" &&
-    record.postType !== "in-the-box" &&
-    record.postType !== "github-trends"
-  );
+  return record.postType !== "injection";
 }
 
 export async function countPostsSince(since: Date): Promise<number> {
@@ -65,52 +53,15 @@ export async function countPostsSince(since: Date): Promise<number> {
   ).length;
 }
 
+export async function countChannelPostsToday(now = new Date()): Promise<number> {
+  const records = await loadPublished();
+  return records.filter((r) => isSameCalendarDay(new Date(r.postedAt), now)).length;
+}
+
 export async function countPostsToday(now = new Date()): Promise<number> {
   const records = await loadPublished();
   return records.filter(
     (r) => isQuotaPost(r) && isSameCalendarDay(new Date(r.postedAt), now)
-  ).length;
-}
-
-export async function countRuPostsToday(now = new Date()): Promise<number> {
-  const records = await loadPublished();
-  return records.filter(
-    (r) =>
-      isQuotaPost(r) &&
-      isSameCalendarDay(new Date(r.postedAt), now) &&
-      isRussianSourceName(r.source)
-  ).length;
-}
-
-export async function countArxivPostsToday(now = new Date()): Promise<number> {
-  const records = await loadPublished();
-  return records.filter(
-    (r) =>
-      isQuotaPost(r) &&
-      isSameCalendarDay(new Date(r.postedAt), now) &&
-      isArxivSourceName(r.source)
-  ).length;
-}
-
-export async function countInterestingEngineeringPostsToday(now = new Date()): Promise<number> {
-  const records = await loadPublished();
-  return records.filter(
-    (r) =>
-      isQuotaPost(r) &&
-      isSameCalendarDay(new Date(r.postedAt), now) &&
-      isInterestingEngineeringSource(r.source)
-  ).length;
-}
-
-export async function count3DNewsPostsToday(now = new Date()): Promise<number> {
-  const records = await loadPublished();
-  return records.filter(
-    (r) =>
-      r.postType !== "digest" &&
-      r.postType !== "trends" &&
-      r.postType !== "github-trends" &&
-      isSameCalendarDay(new Date(r.postedAt), now) &&
-      is3DNewsSourceName(r.source)
   ).length;
 }
 
@@ -135,34 +86,8 @@ export async function getCategoryCountsToday(
   for (const record of records) {
     if (!isQuotaPost(record)) continue;
     if (!isSameCalendarDay(new Date(record.postedAt), now)) continue;
-    const category = record.category ?? "other";
+    const category = record.category ?? "gadgets";
     counts[category] = (counts[category] ?? 0) + 1;
-  }
-
-  return counts;
-}
-
-export interface HorizonCountsToday {
-  now: number;
-  future: number;
-}
-
-export async function getHorizonCountsToday(
-  now = new Date()
-): Promise<HorizonCountsToday> {
-  const records = await loadPublished();
-  const counts: HorizonCountsToday = { now: 0, future: 0 };
-
-  for (const record of records) {
-    if (!isQuotaPost(record)) continue;
-    if (!isSameCalendarDay(new Date(record.postedAt), now)) continue;
-
-    const horizon: ImpactHorizon = record.impactHorizon ?? "now";
-    if (isFutureHorizon(horizon)) {
-      counts.future++;
-    } else {
-      counts.now++;
-    }
   }
 
   return counts;

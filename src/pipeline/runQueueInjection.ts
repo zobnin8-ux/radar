@@ -1,14 +1,13 @@
-import { getPublishQueue, recordToAnalyzed } from "../storage/newsStore.js";
+import { recordToAnalyzedFind } from "../storage/queueManager.js";
+import { getPublishQueue, maintainPublicationQueue } from "../storage/newsStore.js";
+import { countChannelPostsToday, isAlreadyPublished } from "../storage/publishedStore.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import { recordLastRun } from "../storage/stateStore.js";
-import { count3DNewsPostsToday } from "../storage/publishedStore.js";
-import { MAX_3DNEWS_POSTS_PER_DAY } from "../rss/sources.js";
-import { formatSourceList, selectForInjection } from "../utils/injectionSelect.js";
-import { apply3DNewsDailyCap } from "../utils/sourcePublicationCap.js";
 import { logger } from "../utils/logger.js";
+import { pickQueueWithCategoryBalance } from "../utils/queuePick.js";
 import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
 import { endTask, isPipelineRunning, tryBeginTask } from "./activeTask.js";
-import { publishPosts } from "./publishPosts.js";
+import { publishFindPosts } from "./publishPosts.js";
 
 export const MAX_INJECT_PER_COMMAND = 10;
 
@@ -37,7 +36,7 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
       publishedCount: 0,
       requested: options.count,
       queueBefore: 0,
-      message: "Сначала дождитесь окончания основного пайплайна",
+      message: "Сначала дождитесь окончания сбора товаров",
     };
   }
 
@@ -61,8 +60,32 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
   try {
     const settings = await loadSettings();
     const dryRun = options.dryRun ?? settings.dryRun;
+    if (!dryRun) {
+      await maintainPublicationQueue();
+    }
     const queue = await getPublishQueue();
     const queueBefore = queue.length;
+    const channelPostsToday = await countChannelPostsToday();
+    const remainingToday = Math.max(0, settings.maxPostsPerDay - channelPostsToday);
+
+    if (remainingToday === 0 && !dryRun) {
+      const message = `Потолок на сегодня (${channelPostsToday}/${settings.maxPostsPerDay})`;
+      logger.info(`Injection: ${message}`);
+      await progress.done({ published: 0, detail: message });
+      await recordLastRun({
+        trigger: options.trigger,
+        success: true,
+        publishedCount: 0,
+        message: `Инъекция: ${message}`,
+      });
+      return {
+        success: true,
+        publishedCount: 0,
+        requested,
+        queueBefore,
+        message,
+      };
+    }
 
     if (queueBefore === 0) {
       const message = "Очередь пуста — нечего публиковать";
@@ -83,25 +106,18 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
       };
     }
 
-    const { selected: picked, maxPerSource, maxPerCategory } = selectForInjection(
-      queue,
-      requested
-    );
-    const candidates = picked.map((record) => recordToAnalyzed(record));
-    const threeDNewsPostsToday = await count3DNewsPostsToday();
-    const threeDCap = apply3DNewsDailyCap(candidates, threeDNewsPostsToday);
-    if (threeDCap.deferred > 0) {
-      logger.info(
-        `3DNews cap (injection): ${threeDCap.deferred} deferred (max ${MAX_3DNEWS_POSTS_PER_DAY}/day)`
-      );
+    const effectiveRequested = dryRun
+      ? requested
+      : Math.min(requested, remainingToday);
+    const unpublished: typeof queue = [];
+    for (const record of queue) {
+      if (await isAlreadyPublished(record.url)) continue;
+      unpublished.push(record);
     }
-    const toPublish = threeDCap.items;
-    const sourceSummary = formatSourceList(
-      picked.filter((record) => toPublish.some((item) => item.news.url === record.url))
-    );
+    const picked = pickQueueWithCategoryBalance(unpublished, effectiveRequested);
 
-    if (toPublish.length === 0) {
-      const message = `Лимит 3DNews на сегодня (${MAX_3DNEWS_POSTS_PER_DAY}/день) — нечего публиковать из отбора`;
+    if (picked.length === 0) {
+      const message = "В очереди нет неопубликованных товаров";
       logger.info(`Injection: ${message}`);
       await progress.done({ published: 0, detail: message });
       await recordLastRun({
@@ -119,29 +135,30 @@ export async function runQueueInjection(options: InjectOptions): Promise<InjectR
       };
     }
 
-    await updateProgress("select", {
-      current: toPublish.length,
+    const candidates = picked.map((record) => recordToAnalyzedFind(record));
+
+    await updateProgress("publish", {
+      current: candidates.length,
       total: requested,
-      detail: sourceSummary.slice(0, 80) || `${toPublish.length} из очереди`,
+      detail: `${candidates.length} из очереди`,
     });
 
     logger.info(
-      `Injection (${options.trigger}): ${toPublish.length} selected (max ${maxPerSource}/source, ${maxPerCategory}/category) from ${queueBefore} in queue — ${sourceSummary || "—"}`
+      `Injection (${options.trigger}): ${candidates.length} from ${queueBefore} in queue`
     );
 
-    const publishedCount = await publishPosts(toPublish, {
+    const publishedCount = await publishFindPosts(candidates, {
       dryRun,
       postType: "injection",
       onProgress: (current, total, title) =>
         void updateProgress("publish", { current, total, detail: title.slice(0, 80) }),
     });
 
-    const sourcesNote = sourceSummary ? ` Источники: ${sourceSummary}.` : "";
     const message = dryRun
-      ? `Dry-run инъекция: ${publishedCount} из ${toPublish.length} (очередь ${queueBefore})${sourcesNote}`
+      ? `Dry-run инъекция: ${publishedCount} из ${candidates.length} (очередь ${queueBefore})`
       : publishedCount < requested
-        ? `Инъекция: опубликовано ${publishedCount} из ${requested} (отобрано ${toPublish.length}, очередь ${queueBefore})${sourcesNote}`
-        : `Инъекция: опубликовано ${publishedCount}${sourcesNote}`;
+        ? `Инъекция: опубликовано ${publishedCount} из ${requested} (очередь ${queueBefore})`
+        : `Инъекция: опубликовано ${publishedCount}`;
 
     logger.info(message);
     await progress.done({ published: publishedCount, detail: message });

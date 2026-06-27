@@ -1,19 +1,13 @@
-// Publish :05 /2h | RSS :15 /6h | Box 10:25 Wed/Sat | GitTrend ingest Sat 22:00 | GitTrend Sun 10:40 | Trends Sun 11:20 | Weird Sun 19:00
-
-export const DEFAULT_PUBLISH_INTERVAL_CRON = "5 */2 * * *";
-export const DEFAULT_POST_INTERVAL_CRON = "15 */6 * * *";
-export const DEFAULT_WEEKLY_IN_THE_BOX_CRON = "25 10 * * 3,6";
-export const DEFAULT_WEEKLY_GITTREND_INGEST_CRON = "0 22 * * 6";
-export const DEFAULT_WEEKLY_GITTREND_CRON = "40 10 * * 0";
-export const DEFAULT_WEEKLY_TRENDS_CRON = "20 11 * * 0";
-export const DEFAULT_WEEKLY_WEIRD_GITHUB_CRON = "0 19 * * 0";
+export const DEFAULT_POST_INTERVAL_CRON = "30 */4 * * *";
+export const DEFAULT_BATCH_CRON_MORNING = "0 8 * * *";
+export const DEFAULT_BATCH_CRON_DAY = "0 13 * * *";
+export const DEFAULT_BATCH_CRON_EVENING = "0 18 * * *";
+export const DEFAULT_BATCH_CRON_NIGHT = "0 22 * * *";
 
 export const CRON_SCHEDULE_SUMMARY = [
-  "Publish :05 /2h",
-  "RSS :15 /6h",
-  "Box Wed/Sat 10:25",
-  "GitTrend ingest Sat 22:00",
-  "GitTrend Sun 10:40",
-  "Trends Sun 11:20",
-  "Weird GitHub Sun 19:00",
+  "Сбор AliExpress :30 /4h",
+  "Batch publish 08:00",
+  "Batch publish 13:00",
+  "Batch publish 18:00",
+  "Batch publish 22:00",
 ].join(" | ");

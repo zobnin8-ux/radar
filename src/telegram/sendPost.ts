@@ -10,8 +10,24 @@ interface TelegramResponse {
 const TELEGRAM_CAPTION_MAX = 1024;
 const TELEGRAM_MESSAGE_MAX = 4096;
 
-function fitTelegramText(text: string, max: number): string {
+function fitTelegramHtml(text: string, max: number): string {
   if (text.length <= max) return text;
+
+  const linkMatch = text.match(/\n[🛒🚀] <a href="[^"]*">[^<]*<\/a>\s*(\n\n#[^\n]+)?$/);
+  const suffix = linkMatch?.[0] ?? "";
+  const bodyMax = max - suffix.length - 1;
+  if (bodyMax < 80) {
+    logger.warn(`Post truncated for Telegram (${text.length} → ${max} chars, plain cut)`);
+    return text.slice(0, max - 1) + "…";
+  }
+
+  logger.warn(`Post truncated for Telegram (${text.length} → ${bodyMax + suffix.length} chars)`);
+  return text.slice(0, bodyMax).replace(/\s+\S*$/, "") + "…" + suffix;
+}
+
+function fitTelegramText(text: string, max: number, parseMode?: "HTML"): string {
+  if (text.length <= max) return text;
+  if (parseMode === "HTML") return fitTelegramHtml(text, max);
   logger.warn(`Post truncated for Telegram (${text.length} → ${max} chars)`);
   return text.slice(0, max - 1) + "…";
 }
@@ -100,7 +116,7 @@ export async function sendPost(
 
   try {
     if (opts.photoUrl && opts.splitPhotoAndText) {
-      const textBody = fitTelegramText(opts.text, TELEGRAM_MESSAGE_MAX);
+      const textBody = fitTelegramText(opts.text, TELEGRAM_MESSAGE_MAX, opts.parseMode);
 
       const photoOk = await callTelegram(token, "sendPhoto", {
         chat_id: channelId,
@@ -122,7 +138,7 @@ export async function sendPost(
     }
 
     const maxLen = opts.photoUrl ? TELEGRAM_CAPTION_MAX : TELEGRAM_MESSAGE_MAX;
-    const outgoing = fitTelegramText(opts.text, maxLen);
+    const outgoing = fitTelegramText(opts.text, maxLen, opts.parseMode);
 
     if (opts.photoUrl) {
       const ok = await callTelegram(token, "sendPhoto", {

@@ -535,15 +535,15 @@
         <p class="hint">1 — хотя бы один значимый AI (уровень 2–4). Tier-1/impact — сразу. 0 = выкл</p>
       </div>
       <div class="field">
-        <label>Как часто проверять RSS</label>
+        <label>Как часто собирать товары (AliExpress)</label>
         <select id="set-schedule"></select>
-        <p class="hint">Сбор новостей и пополнение очереди (не публикация)</p>
+        <p class="hint">Сбор товаров и пополнение очереди (не публикация)</p>
       </div>
       <div class="field">
         <label>Равномерная публикация из очереди</label>
         <select id="set-even-spread">
           <option value="true">Включена — лимит/день растянут по суткам</option>
-          <option value="false">Выключена — публиковать при проверке RSS</option>
+          <option value="false">Выключена — публиковать при сборе товаров</option>
         </select>
       </div>
       <div class="field">
@@ -718,7 +718,7 @@ async function refresh() {
     const pauseBtn = document.getElementById('btn-toggle-pause');
 
     const taskHero = {
-      pipeline: { icon: '🔄', status: 'Собираю новости...', sub: 'Этапы ниже обновляются каждые 2 сек' },
+      pipeline: { icon: '🔄', status: 'Сбор товаров...', sub: 'AliExpress → AI → фото → очередь' },
       injection: { icon: '⚡', status: 'Инъекция из очереди...', sub: 'Публикуем вне дневного лимита' },
       box: { icon: '📦', status: 'Будущее в коробке...', sub: 'RSS → AI → фото → публикация' },
       trends: { icon: '🧭', status: 'Направление недели...', sub: 'Сигналы → OpenAI → публикация' },
@@ -731,10 +731,20 @@ async function refresh() {
       const hero = taskHero[task] || taskHero.pipeline;
       heroIcon.textContent = hero.icon;
       heroStatus.textContent = hero.status;
-      heroSub.textContent = hero.sub;
-      if (progRunning) renderPipelineStages(p.phases);
-      else if (!progressPollId) refreshProgress();
+      if (progRunning && p.phases?.length) {
+        const active = p.phases.find((x) => x.state === 'active');
+        heroSub.textContent = active
+          ? `${active.label}${active.suffix ? ': ' + active.suffix : ''}`
+          : hero.sub;
+      } else {
+        heroSub.textContent = hero.sub;
+      }
+      if (progRunning) {
+        renderPipelineStages(p.phases);
+        if (!progressPollId) startProgressPoll();
+      } else if (!progressPollId) refreshProgress();
     } else if (s.paused) {
+      stopProgressPoll();
       if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '⏸';
       heroStatus.textContent = 'На паузе';
@@ -742,6 +752,7 @@ async function refresh() {
       pauseBtn.innerHTML = '▶️ Возобновить';
       pauseBtn.className = 'btn-big secondary';
     } else if (s.remainingToday <= 0) {
+      stopProgressPoll();
       if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '✅';
       heroStatus.textContent = 'Лимит на сегодня';
@@ -749,6 +760,7 @@ async function refresh() {
       pauseBtn.innerHTML = '⏸ Пауза';
       pauseBtn.className = 'btn-big warn';
     } else {
+      stopProgressPoll();
       if (!progressPollId) renderPipelineStages(null);
       heroIcon.textContent = '📡';
       heroStatus.textContent = 'Всё в порядке';
@@ -767,69 +779,29 @@ async function refresh() {
     document.getElementById('info-per-run').textContent = `до ${s.maxPostsPerRun} постов`;
     document.getElementById('info-last-run').textContent = humanLastRun(s.lastRun);
     document.getElementById('info-mode').textContent = s.dryRun ? 'Тестовый' : 'Боевой';
-    const quotaMax = s.categoryQuotaMax ?? 0;
     document.getElementById('info-category-quota').textContent =
-      quotaMax > 0 ? `до ${quotaMax} в категории` : 'выключена';
+      `батч ${s.batchSize ?? 3} × 4/день`;
 
-    const horizonMix = s.horizonMixPercent ?? 0;
-    const hCounts = s.horizonCountsToday || { now: 0, future: 0 };
-    const hTotal = (hCounts.now || 0) + (hCounts.future || 0);
-    const futurePct = hTotal > 0 ? Math.round((hCounts.future / hTotal) * 100) : 0;
     document.getElementById('info-horizon-mix').textContent =
-      horizonMix > 0
-        ? `${hCounts.now} сейчас / ${hCounts.future} долг. (цель ${horizonMix}%)`
-        : 'выключен';
+      `${s.batchCronMorning ?? '08:00'} / ${s.batchCronDay ?? '13:00'} / ${s.batchCronEvening ?? '18:00'} / ${s.batchCronNight ?? '22:00'}`;
+
+    document.getElementById('info-min-ai').textContent = 'WOW / WANT / SHARE';
+
+    document.getElementById('horizons-card').classList.add('hidden');
 
     const counts = s.categoryCountsToday || {};
-    const minAi = s.minAiPostsPerDay ?? 0;
-    const aiToday = s.aiPostsToday ?? (counts.ai ?? 0);
-    const minAiMet = minAi > 0 && aiToday >= minAi;
-    document.getElementById('info-min-ai').textContent =
-      minAi > 0
-        ? `${aiToday} / мин. ${minAi}${minAiMet ? ' ✓' : ''}`
-        : 'выключен';
-
-    const horCard = document.getElementById('horizons-card');
-    const horBreakdown = document.getElementById('horizon-breakdown');
-    if (hTotal > 0 && horizonMix > 0) {
-      horCard.classList.remove('hidden');
-      const atTarget = futurePct >= horizonMix;
-      horBreakdown.innerHTML = `
-        <div class="info-row">
-          <span class="info-label">Сейчас</span>
-          <span class="info-value">${hCounts.now}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Долгосрочные (1–10+ лет)</span>
-          <span class="info-value" style="${atTarget ? '' : 'color:var(--warn)'}">${hCounts.future} (${futurePct}%)</span>
-        </div>
-      `;
-    } else {
-      horCard.classList.add('hidden');
-    }
-
     const catCard = document.getElementById('categories-card');
     const catBreakdown = document.getElementById('category-breakdown');
-    let activeCats = Object.entries(counts).filter(([, n]) => n > 0);
-    if (minAi > 0 && (counts.ai ?? 0) < minAi && !activeCats.some(([c]) => c === 'ai')) {
-      activeCats = [['ai', counts.ai ?? 0], ...activeCats];
-    }
+    const activeCats = Object.entries(counts).filter(([, n]) => n > 0);
     if (activeCats.length > 0) {
       catCard.classList.remove('hidden');
       catBreakdown.innerHTML = activeCats
         .sort((a, b) => b[1] - a[1])
         .map(([cat, n]) => {
-          const atLimit = quotaMax > 0 && n >= quotaMax;
-          const isAi = cat === 'ai';
-          const minAiN = s.minAiPostsPerDay ?? 0;
-          const belowMinAi = isAi && minAiN > 0 && n < minAiN;
           const label = categoryLabel(cat);
-          const suffix = isAi && minAiN > 0
-            ? ` / макс. ${quotaMax || '∞'}, мин. ${minAiN}`
-            : quotaMax > 0 ? ` / ${quotaMax}` : '';
           return `<div class="info-row">
             <span class="info-label">${esc(label)}</span>
-            <span class="info-value" style="${atLimit || belowMinAi ? 'color:var(--warn)' : ''}">${n}${suffix}</span>
+            <span class="info-value">${n}</span>
           </div>`;
         }).join('');
     } else {
@@ -857,7 +829,7 @@ async function refresh() {
 }
 
 async function confirmRun() {
-  if (!confirm('Запустить сбор новостей и опубликовать в канал?')) return;
+  if (!confirm('Запустить публикацию из очереди в канал?')) return;
   setBtnLoading('btn-run', true);
   startProgressPoll();
   try {
@@ -932,12 +904,11 @@ function renderArchiveItems(items, emptyIcon, emptyText, showPosition) {
         <div class="post-title">${esc(item.title)}</div>
         <div class="post-meta">
           <span class="cat-badge">${esc(categoryLabel(item.category))}</span>
-          ${esc(item.source)} · ${levelLabel(item.level)}
-          <span class="score-badge">${item.finalScore != null ? `★${item.finalScore.toFixed(1)}` : `${item.score}/10`}</span>
+          ${esc(item.source)} · W${item.wow ?? 0}/Wa${item.want ?? 0}/S${item.share ?? 0}
+          <span class="score-badge">★${item.finalScore ?? 0}</span>
         </div>
         <div class="post-meta" style="margin-top:4px">
-          ${horizonLabel(item.impactHorizon)} · ${timeAgo(item.discoveredAt)}
-          ${item.sourceTier === 1 ? ' · tier 1' : ''}
+          ${timeAgo(item.discoveredAt)}
         </div>
         <a class="post-link" href="${esc(item.url)}" target="_blank" rel="noopener">Источник →</a>
       </div>
@@ -960,22 +931,17 @@ async function loadArchive() {
   const c = data.counts || {};
   document.getElementById('stat-queue').textContent = c.queue ?? 0;
   document.getElementById('stat-today').textContent = c.publishedToday ?? 0;
-  document.getElementById('stat-obs').textContent = c.observations ?? 0;
-  document.getElementById('stat-trends').textContent = c.trendSignals ?? 0;
+  document.getElementById('stat-obs').textContent = c.archiveTotal ?? 0;
+  document.getElementById('stat-trends').textContent = '—';
 
   document.getElementById('queue-list').innerHTML = renderArchiveItems(
     data.queue,
     '📭',
-    'Очередь пуста — после следующего запуска здесь появятся готовые посты',
+    'Очередь пуста — после следующего сбора товаров здесь появятся находки',
     true
   );
-  document.getElementById('obs-list').innerHTML = renderArchiveItems(
-    data.observations,
-    '🔭',
-    'Наблюдений пока нет',
-    false
-  );
-  await loadTrends();
+  document.getElementById('obs-list').innerHTML = '<div class="empty"><div class="icon">📦</div>Рубрика отключена — канал про гаджеты и находки</div>';
+  document.getElementById('trends-block').innerHTML = '<div class="empty"><div class="icon">—</div>Рубрика «Направление недели» отключена</div>';
 }
 
 async function loadTrends() {
@@ -1012,8 +978,8 @@ async function loadHistory() {
     <div class="post-card">
       <div class="post-title">${esc(p.title)}</div>
       <div class="post-meta">
-        ${esc(p.source)} · ${levelLabel(p.level)} · ${timeAgo(p.postedAt)}
-        <span class="score-badge">${p.score}/10</span>
+        ${esc(p.source)} · ${categoryLabel(p.category)} · ${timeAgo(p.postedAt)}
+        <span class="score-badge">★${p.finalScore ?? 0}</span>
       </div>
       <a class="post-link" href="${p.url}" target="_blank">Открыть источник →</a>
     </div>
@@ -1070,11 +1036,11 @@ async function loadSettingsPanel() {
   settings = await api('/api/settings');
   document.getElementById('set-max-day').value = settings.maxPostsPerDay;
   document.getElementById('set-max-run').value = settings.maxPostsPerRun;
-  document.getElementById('set-category-quota').value = settings.categoryQuotaMax ?? 4;
-  document.getElementById('set-horizon-mix').value = settings.horizonMixPercent ?? 30;
-  document.getElementById('set-min-ai').value = settings.minAiPostsPerDay ?? 1;
+  document.getElementById('set-category-quota').value = settings.batchSize ?? 3;
+  document.getElementById('set-horizon-mix').value = settings.batchCronMorning ?? '0 8 * * *';
+  document.getElementById('set-min-ai').value = settings.batchCronDay ?? '0 13 * * *';
   document.getElementById('set-dry').value = String(settings.dryRun);
-  document.getElementById('set-even-spread').value = String(settings.publishEvenSpread !== false);
+  document.getElementById('set-even-spread').value = String(settings.batchCronEvening ?? '0 18 * * *');
 
   const sel = document.getElementById('set-schedule');
   sel.innerHTML = Object.entries(SCHEDULE_OPTIONS).map(([key, v]) =>
@@ -1114,12 +1080,11 @@ async function saveSettings() {
       body: JSON.stringify({
         maxPostsPerDay: +document.getElementById('set-max-day').value,
         maxPostsPerRun: +document.getElementById('set-max-run').value,
-        categoryQuotaMax: +document.getElementById('set-category-quota').value,
-        horizonMixPercent: +document.getElementById('set-horizon-mix').value,
-        minAiPostsPerDay: +document.getElementById('set-min-ai').value,
+        batchSize: +document.getElementById('set-category-quota').value,
+        batchCronMorning: document.getElementById('set-horizon-mix').value,
+        batchCronDay: document.getElementById('set-min-ai').value,
+        batchCronEvening: document.getElementById('set-even-spread').value,
         postIntervalCron: cron,
-        publishEvenSpread: document.getElementById('set-even-spread').value === 'true',
-        publishIntervalCron: publishCron,
         dryRun: document.getElementById('set-dry').value === 'true',
         rssSources
       })
@@ -1134,34 +1099,17 @@ async function saveSettings() {
 
 function categoryLabel(cat) {
   const labels = {
-    ai: 'AI',
-    robotics: 'Робототехника',
-    space: 'Космос',
-    aviation: 'Авиация',
-    energy: 'Энергетика',
-    transport: 'Транспорт',
-    biotech: 'Биотех',
-    engineering: 'Инженерия',
-    science: 'Наука',
-    materials: 'Материалы',
-    climate: 'Климат',
-    'defense-tech': 'Оборонные техн.',
-    semiconductors: 'Чипы',
-    startups: 'Стартапы',
-    other: 'Прочее'
+    'smart-home': 'Smart Home',
+    gadgets: 'Гаджеты',
+    edc: 'EDC',
+    workshop: 'Мастерская',
+    auto: 'Авто',
+    travel: 'Путешествия',
+    'desk-setup': 'Desk Setup',
+    'future-stuff': 'Future Stuff',
+    weird: 'Weird'
   };
   return labels[cat] || cat;
-}
-
-function levelLabel(level) {
-  const labels = {
-    observation: '🟢 Уровень 1',
-    signal: '🟡 Уровень 2',
-    impact: '🔴 Уровень 3',
-    breakthrough: '🚀 Уровень 4',
-    failure: '⚫ Сбой'
-  };
-  return labels[level] || level || '—';
 }
 
 function esc(t) {

@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { getPcDashboardUrl } from "../utils/dashboardUrls.js";
 import { isAnyTaskRunning, isInjectionRunning } from "../pipeline/activeTask.js";
+import { runBatchPublish } from "../pipeline/runBatchPublish.js";
 import { runPipeline } from "../pipeline/runPipeline.js";
+import { reschedule } from "../pipeline/scheduler.js";
 import {
   MAX_INJECT_PER_COMMAND,
   runQueueInjection,
@@ -14,13 +16,10 @@ import {
   countInjectionsToday,
   countPostsToday,
   getCategoryCountsToday,
-  getHorizonCountsToday,
   loadPublished,
 } from "../storage/publishedStore.js";
-import { reschedule } from "../pipeline/scheduler.js";
 import { loadSettings, saveSettings, type AppSettings } from "../storage/settingsStore.js";
 import { getArchiveOverview } from "../storage/newsStore.js";
-import { getLastWeeklyTrend } from "../storage/trendsStore.js";
 import { filterRssErrors, loadState } from "../storage/stateStore.js";
 import { buildPhaseViews, readProgress } from "../utils/progress.js";
 import { cronToLabel, SCHEDULE_PRESETS } from "../utils/schedule.js";
@@ -83,7 +82,6 @@ async function handleApi(
     const injectionsToday = await countInjectionsToday();
     const remaining = settings.maxPostsPerDay - postsToday;
     const categoryCountsToday = await getCategoryCountsToday();
-    const horizonCountsToday = await getHorizonCountsToday();
     json(res, 200, {
       paused: settings.paused,
       pipelineRunning: state.pipelineRunning,
@@ -94,14 +92,14 @@ async function handleApi(
       maxInjectPerCommand: MAX_INJECT_PER_COMMAND,
       maxPostsPerDay: settings.maxPostsPerDay,
       maxPostsPerRun: settings.maxPostsPerRun,
-      categoryQuotaMax: settings.categoryQuotaMax ?? 0,
-      horizonMixPercent: settings.horizonMixPercent ?? 0,
-      minAiPostsPerDay: settings.minAiPostsPerDay ?? 0,
-      aiPostsToday: categoryCountsToday.ai ?? 0,
+      batchSize: settings.batchSize,
       categoryCountsToday,
-      horizonCountsToday,
       dryRun: settings.dryRun,
       postIntervalCron: settings.postIntervalCron,
+      batchCronMorning: settings.batchCronMorning,
+      batchCronDay: settings.batchCronDay,
+      batchCronEvening: settings.batchCronEvening,
+      batchCronNight: settings.batchCronNight,
       scheduleLabel: cronToLabel(settings.postIntervalCron),
       lastRun: state.lastRun,
       rssErrors: filterRssErrors(state.rssErrors, {
@@ -140,12 +138,6 @@ async function handleApi(
     return;
   }
 
-  if (pathname === "/api/trends" && method === "GET") {
-    const last = await getLastWeeklyTrend();
-    json(res, 200, { last });
-    return;
-  }
-
   if (pathname === "/api/settings" && method === "GET") {
     json(res, 200, await loadSettings());
     return;
@@ -160,10 +152,7 @@ async function handleApi(
       rssSources: body.rssSources ?? current.rssSources,
     };
     await saveSettings(next);
-    if (body.postIntervalCron) {
-      await reschedule();
-    }
-    if (body.publishIntervalCron !== undefined || body.publishEvenSpread !== undefined) {
+    if (body.postIntervalCron || body.batchCronMorning || body.batchCronDay || body.batchCronEvening || body.batchCronNight) {
       await reschedule();
     }
     json(res, 200, next);
@@ -187,7 +176,12 @@ async function handleApi(
       json(res, 409, { error: "Another task already running" });
       return;
     }
-    const result = await runPipeline({ trigger: "dashboard", dryRun: false });
+    const settings = await loadSettings();
+    const result = await runBatchPublish({
+      count: settings.maxPostsPerRun,
+      trigger: "dashboard",
+      dryRun: false,
+    });
     json(res, 200, result);
     return;
   }

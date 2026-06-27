@@ -1,24 +1,19 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { config } from "../config.js";
-import { mergeRssSources, type RssSourceConfig } from "../rss/sources.js";
+import { mergeRssSources, disableLegacyRssSources, type RssSourceConfig } from "../rss/sources.js";
 
 const SETTINGS_PATH = join(process.cwd(), "data", "settings.json");
 
 export interface AppSettings {
   maxPostsPerDay: number;
   maxPostsPerRun: number;
-  /** Макс. постов одной категории в день; 0 = без лимита */
-  categoryQuotaMax: number;
-  /** Мин. доля долгосрочных постов в день (%); 0 = без баланса горизонтов */
-  horizonMixPercent: number;
-  /** Мин. значимых AI-постов в день (уровни 2–4, score ≥ 5); 0 = выкл */
-  minAiPostsPerDay: number;
+  batchSize: number;
+  batchCronMorning: string;
+  batchCronDay: string;
+  batchCronEvening: string;
+  batchCronNight: string;
   postIntervalCron: string;
-  /** Равномерная публикация из очереди в течение суток */
-  publishEvenSpread: boolean;
-  /** Cron для публикации из очереди (отдельно от проверки RSS) */
-  publishIntervalCron: string;
   dryRun: boolean;
   paused: boolean;
   rssSources: RssSourceConfig[];
@@ -28,12 +23,12 @@ function defaultSettings(): AppSettings {
   return {
     maxPostsPerDay: config.MAX_POSTS_PER_DAY,
     maxPostsPerRun: config.MAX_POSTS_PER_RUN,
-    categoryQuotaMax: 2,
-    horizonMixPercent: 30,
-    minAiPostsPerDay: 1,
+    batchSize: config.BATCH_SIZE,
+    batchCronMorning: config.BATCH_CRON_MORNING,
+    batchCronDay: config.BATCH_CRON_DAY,
+    batchCronEvening: config.BATCH_CRON_EVENING,
+    batchCronNight: config.BATCH_CRON_NIGHT,
     postIntervalCron: config.POST_INTERVAL_CRON,
-    publishEvenSpread: true,
-    publishIntervalCron: config.PUBLISH_INTERVAL_CRON,
     dryRun: config.DRY_RUN,
     paused: false,
     rssSources: mergeRssSources([]),
@@ -59,22 +54,7 @@ export async function loadSettings(): Promise<AppSettings> {
   const parsed = JSON.parse(raw) as Partial<AppSettings>;
   cache = { ...defaultSettings(), ...parsed };
   if (parsed.rssSources) {
-    cache.rssSources = mergeRssSources(parsed.rssSources);
-  }
-  if (cache.categoryQuotaMax === undefined) {
-    cache.categoryQuotaMax = 2;
-  }
-  if (cache.horizonMixPercent === undefined) {
-    cache.horizonMixPercent = 30;
-  }
-  if (cache.minAiPostsPerDay === undefined) {
-    cache.minAiPostsPerDay = 1;
-  }
-  if (cache.publishEvenSpread === undefined) {
-    cache.publishEvenSpread = true;
-  }
-  if (cache.publishIntervalCron === undefined) {
-    cache.publishIntervalCron = config.PUBLISH_INTERVAL_CRON;
+    cache.rssSources = mergeRssSources(disableLegacyRssSources(parsed.rssSources));
   }
   return cache;
 }

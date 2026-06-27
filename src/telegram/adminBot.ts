@@ -1,58 +1,44 @@
 import { config } from "../config.js";
-import { ingestGitTrendReport } from "../pipeline/ingestGitTrendReport.js";
 import { isAnyTaskRunning, isInjectionRunning } from "../pipeline/activeTask.js";
 import { runPipeline } from "../pipeline/runPipeline.js";
+import { runBatchPublish } from "../pipeline/runBatchPublish.js";
 import {
   MAX_INJECT_PER_COMMAND,
   runQueueInjection,
 } from "../pipeline/runQueueInjection.js";
-import { isInTheBoxRunning, runWeeklyInTheBox } from "../pipeline/runWeeklyInTheBox.js";
-import { getRecentInTheBoxRunStats } from "../storage/inTheBoxStore.js";
-import { formatInTheBoxReserveStatus } from "../storage/inTheBoxReserveStore.js";
-import { formatBoxStatsHistory } from "../utils/boxRunReport.js";
-import { isGitTrendRunning, runWeeklyGitTrend } from "../pipeline/runWeeklyGitTrend.js";
-import { isWeirdGitHubRunning, runWeeklyWeirdGitHub } from "../pipeline/runWeeklyWeirdGitHub.js";
-import { isTrendsRunning, runWeeklyTrends } from "../pipeline/runWeeklyTrends.js";
 import { getAdminChatId, isAdminUser, loadAdmin, saveAdmin } from "../storage/adminStore.js";
 import {
+  countChannelPostsToday,
   countInjectionsToday,
-  countPostsToday,
   loadPublished,
 } from "../storage/publishedStore.js";
+import { countPublishQueue } from "../storage/newsStore.js";
 import { loadSettings, updateSettings } from "../storage/settingsStore.js";
 import { loadState } from "../storage/stateStore.js";
 import {
+  explainProgressHuman,
   formatTelegramProgress,
   isProgressRunningAsync,
   readProgress,
 } from "../utils/progress.js";
-import { buildRuSourcesReport, formatRuSourcesReport } from "../rss/ruSourcesReport.js";
 import { buildDashboardPlainMessage } from "../utils/dashboardUrls.js";
 import { buildQueuePruneReport, buildQueueStatusMessage } from "../utils/queueReport.js";
-import { buildSourceStatsMessage } from "../utils/sourceStats.js";
-import { backfillObserverComments } from "../ai/backfillObserver.js";
 import { cronToLabel } from "../utils/schedule.js";
-import { postsDueByNow } from "../utils/evenPublish.js";
 import { isSameCalendarDay } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
 import { requestShutdown } from "../utils/shutdown.js";
 import { sleep } from "../utils/sleep.js";
-import { getUpdates, sendTelegramMessage } from "./botApi.js";
+import { getUpdates, sendTelegramMessage, setBotCommands } from "./botApi.js";
 import { runWithTelegramProgress } from "./progressReporter.js";
 
-/** Старые имена с дефисом → слитные (Telegram-стиль). */
 const LEGACY_COMMAND_ALIASES: Record<string, string> = {
-  "/gittrend-ingest": "/gittrendingest",
   "/queue-prune": "/queueprune",
-  "/source-stats": "/sourcestats",
-  "/observer-queue": "/observerqueue",
 };
 
 function normalizeCommand(cmd: string): string {
   return LEGACY_COMMAND_ALIASES[cmd] ?? cmd;
 }
 
-/** /inject@BotName 5 → cmd /inject, args [5]; /inject5 → args [5] */
 function parseTelegramCommand(text: string): { cmd: string; args: string[] } {
   const parts = text.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return { cmd: "", args: [] };
@@ -69,56 +55,67 @@ function parseTelegramCommand(text: string): { cmd: string; args: string[] } {
   return { cmd: normalizeCommand(base), args: parts.slice(1) };
 }
 
-const HELP_TEXT = `📡 Радар будущего — команды
+const HELP_TEXT = `📦 Канал находок — команды
 
 /status — как дела
-/run — опубликовать сейчас
-/inject <число> — инъекция из очереди, напр. /inject 5 (одной строкой)
-/dry — тест без канала
-/rutest — проверка RU-источников (4 шт., RSS, без AI)
+/run — опубликовать из очереди (до ${config.MAX_POSTS_PER_RUN})
+/inject <число> — инъекция из очереди, напр. /inject 5
+/dry — тест сбора товаров без канала
+/collect — собрать товары в очередь сейчас
 /pause — пауза
 /resume — возобновить
-/stop — остановить бот (как Ctrl+C в терминале)
+/stop — остановить бот
 /today — что вышло
 /panel — адрес панели
-/trends — направление недели (RSS)
-/github — GitHub-тренды (GitTrend)
-/gittrendingest — забрать weekly-radar.json сейчас (как в субботу 22:00)
-/weird — странный GitHub недели (GitTrend weirdFindOfTheWeek)
-/box — будущее в коробке (гаджеты, в канал)
-/boxstats — статистика прогонов /box
-/boxreserve — запас рубрики (до 3, читает /box и cron)
 /queue — очередь публикаций
-/queueprune — очередь: очистка
-/sourcestats — статистика источников
-/observerqueue — наблюдатель для очереди
+/queueprune — очистка очереди
 
-/help или /commands — показать этот список`;
+/help или /commands — этот список`;
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+const BOT_COMMANDS = [
+  { command: "status", description: "Статус канала" },
+  { command: "run", description: "Опубликовать из очереди" },
+  { command: "collect", description: "Собрать товары в очередь" },
+  { command: "dry", description: "Тест сбора без канала" },
+  { command: "inject", description: "Инъекция из очереди" },
+  { command: "today", description: "Что вышло сегодня" },
+  { command: "queue", description: "Очередь публикаций" },
+  { command: "panel", description: "Адрес панели" },
+  { command: "pause", description: "Пауза автопубликации" },
+  { command: "resume", description: "Возобновить автопубликацию" },
+  { command: "stop", description: "Остановить бот" },
+  { command: "help", description: "Список команд" },
+];
 
 async function buildStatusText(): Promise<string> {
   const settings = await loadSettings();
   const state = await loadState();
-  const postsToday = await countPostsToday();
+  const channelPostsToday = await countChannelPostsToday();
   const injectionsToday = await countInjectionsToday();
+  const queueSize = await countPublishQueue();
+  const remainingToday = Math.max(0, settings.maxPostsPerDay - channelPostsToday);
 
   const progData = await readProgress();
   const progRunning = await isProgressRunningAsync();
 
-  let status: string;
+  let headline: string;
+  let body = "";
+
   if (progRunning) {
-    status = formatTelegramProgress(progData, { title: "🔄 Радар" });
+    headline = "🔄 Сейчас работает";
+    const human = explainProgressHuman(progData);
+    body = human ? `${human}\n\n` : "";
+    body += formatTelegramProgress(progData, { title: "Этапы" });
   } else if (settings.paused) {
-    status = "⏸ На паузе";
+    headline = "⏸ На паузе — автопубликация выключена";
   } else if (state.pipelineRunning) {
-    status = "🔄 Выполняется";
+    headline = "🔄 Сбор товаров";
   } else if (isInjectionRunning()) {
-    status = "⚡ Инъекция";
+    headline = "⚡ Инъекция из очереди";
+  } else if (remainingToday <= 0) {
+    headline = "✅ Потолок на сегодня достигнут";
   } else {
-    status = "🟢 Работает";
+    headline = "🟢 Ждёт — всё в порядке";
   }
 
   const lastRun = state.lastRun.at
@@ -126,21 +123,24 @@ async function buildStatusText(): Promise<string> {
     : "ещё не было";
 
   const mode = settings.dryRun ? "тестовый" : "боевой";
-  const due = postsDueByNow(settings.maxPostsPerDay);
-  const spreadLine = settings.publishEvenSpread
-    ? `График: ${postsToday}/${settings.maxPostsPerDay} (слот ${due}), тик ${cronToLabel(settings.publishIntervalCron)}`
-    : null;
+  const postsLine =
+    remainingToday > 0
+      ? `В канале сегодня: ${channelPostsToday}/${settings.maxPostsPerDay} (потолок, можно ещё ${remainingToday})`
+      : `В канале сегодня: ${channelPostsToday}/${settings.maxPostsPerDay} — потолок`;
 
   const lines = [
-    status,
+    headline,
+    body ? `` : null,
+    body || null,
     ``,
-    `Постов сегодня: ${postsToday}/${settings.maxPostsPerDay}${injectionsToday > 0 ? ` (+${injectionsToday} инъекция)` : ""}`,
-    `За тик: до ${settings.maxPostsPerRun}`,
-    ...(spreadLine ? [spreadLine] : []),
-    `RSS: ${cronToLabel(settings.postIntervalCron)}`,
+    postsLine + (injectionsToday > 0 ? ` · инъекций: ${injectionsToday}` : ""),
+    `В очереди публикаций: ${queueSize} карточек`,
+    `Публикация: ${settings.batchSize} поста × 4 раза (08 / 13 / 18 / 22)`,
+    `Сбор товаров: ${cronToLabel(settings.postIntervalCron)}`,
     `Режим: ${mode}`,
-    `Последний раз: ${lastRun}`,
-  ];
+    `Последний цикл: ${lastRun}`,
+  ].filter((line): line is string => line !== null);
+
   return lines.join("\n");
 }
 
@@ -153,7 +153,7 @@ async function buildTodayText(): Promise<string> {
   return today
     .map((r, i) => {
       const tag = r.postType === "injection" ? " ⚡" : "";
-      return `${i + 1}. ${r.title}${tag}\n   ${r.source}, ${r.level ?? "—"}, score ${r.score}`;
+      return `${i + 1}. ${r.title}${tag}\n   ${r.source}, score ${r.finalScore}, #${r.category}`;
     })
     .join("\n\n");
 }
@@ -209,12 +209,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
 
     case "/inject": {
-      if (
-        isAnyTaskRunning() ||
-        isTrendsRunning() ||
-        isInTheBoxRunning() ||
-        isGitTrendRunning()
-      ) {
+      if (isAnyTaskRunning()) {
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
       }
@@ -222,7 +217,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       if (!Number.isFinite(n) || n < 1 || n > MAX_INJECT_PER_COMMAND) {
         await sendTelegramMessage(
           chatId,
-          `Укажите число от 1 до ${MAX_INJECT_PER_COMMAND} одной строкой:\n/inject 5\n\nОтдельное сообщение «5» не сработает.`
+          `Укажите число от 1 до ${MAX_INJECT_PER_COMMAND}:\n/inject 5`
         );
         return;
       }
@@ -240,118 +235,9 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
     }
 
-    case "/box": {
-      if (
-        isInTheBoxRunning() ||
-        isAnyTaskRunning() ||
-        isTrendsRunning() ||
-        isGitTrendRunning()
-      ) {
-        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
-        return;
-      }
-      await runWithTelegramProgress(chatId, {
-        task: "box",
-        dryRun: false,
-        title: "📦 Будущее в коробке",
-        run: () => runWeeklyInTheBox({ trigger: "manual" }),
-      });
-      break;
-    }
-
-    case "/boxstats": {
-      const stats = await getRecentInTheBoxRunStats(10);
-      await sendTelegramMessage(chatId, formatBoxStatsHistory(stats));
-      break;
-    }
-
-    case "/boxreserve": {
-      await sendTelegramMessage(chatId, await formatInTheBoxReserveStatus());
-      break;
-    }
-
-    case "/trends": {
-      if (
-        isTrendsRunning() ||
-        isAnyTaskRunning() ||
-        isInTheBoxRunning() ||
-        isGitTrendRunning()
-      ) {
-        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
-        return;
-      }
-      await runWithTelegramProgress(chatId, {
-        task: "trends",
-        dryRun: false,
-        title: "🧭 Направление недели",
-        run: () => runWeeklyTrends(),
-      });
-      break;
-    }
-
-    case "/gittrendingest": {
-      if (isAnyTaskRunning() || isGitTrendRunning() || isWeirdGitHubRunning()) {
-        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
-        return;
-      }
-      const force = args[0] === "force";
-      const result = await ingestGitTrendReport({ force, notify: true });
-      await sendTelegramMessage(
-        chatId,
-        result.success
-          ? result.notified
-            ? `✅ ${result.message}\n\nУведомление отправлено.`
-            : `✅ ${result.message}`
-          : `❌ ${result.message}`
-      );
-      break;
-    }
-
-    case "/github": {
-      if (
-        isGitTrendRunning() ||
-        isWeirdGitHubRunning() ||
-        isAnyTaskRunning() ||
-        isInTheBoxRunning() ||
-        isTrendsRunning()
-      ) {
-        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
-        return;
-      }
-      const force = args[0] === "force";
-      await runWithTelegramProgress(chatId, {
-        task: "github",
-        dryRun: false,
-        title: force ? "🔮 GitHub-тренды (force)" : "🔮 GitHub-тренды",
-        run: () => runWeeklyGitTrend({ force }),
-      });
-      break;
-    }
-
-    case "/weird": {
-      if (
-        isWeirdGitHubRunning() ||
-        isGitTrendRunning() ||
-        isAnyTaskRunning() ||
-        isInTheBoxRunning() ||
-        isTrendsRunning()
-      ) {
-        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
-        return;
-      }
-      const force = args[0] === "force";
-      await runWithTelegramProgress(chatId, {
-        task: "weird",
-        dryRun: false,
-        title: force ? "🧩 Странный GitHub (force)" : "🧩 Странный GitHub",
-        run: () => runWeeklyWeirdGitHub({ force }),
-      });
-      break;
-    }
-
     case "/pause": {
       await updateSettings({ paused: true });
-      await sendTelegramMessage(chatId, "⏸ Пауза. /run по-прежнему работает.");
+      await sendTelegramMessage(chatId, "⏸ Пауза. /run и /collect по-прежнему работают.");
       break;
     }
 
@@ -364,7 +250,7 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
     case "/stop": {
       await sendTelegramMessage(
         chatId,
-        "🛑 Останавливаю бот.\n\nЗапуск снова: ярлык Radar Future или npm start в папке проекта."
+        "🛑 Останавливаю бот.\n\nЗапуск снова: npm start в папке проекта."
       );
       await sleep(400);
       await requestShutdown();
@@ -376,10 +262,30 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
         await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
         return;
       }
+      const settings = await loadSettings();
       await runWithTelegramProgress(chatId, {
         task: "pipeline",
         dryRun: false,
-        title: "🔄 Боевой цикл",
+        title: "📤 Публикация",
+        run: () =>
+          runBatchPublish({
+            count: settings.maxPostsPerRun,
+            trigger: "telegram",
+            dryRun: false,
+          }),
+      });
+      break;
+    }
+
+    case "/collect": {
+      if (isAnyTaskRunning()) {
+        await sendTelegramMessage(chatId, "⏳ Уже выполняется...");
+        return;
+      }
+      await runWithTelegramProgress(chatId, {
+        task: "pipeline",
+        dryRun: false,
+        title: "🔄 Сбор товаров",
         run: () => runPipeline({ trigger: "telegram", dryRun: false }),
       });
       break;
@@ -399,18 +305,6 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       break;
     }
 
-    case "/rutest": {
-      await sendTelegramMessage(chatId, "🇷🇺 Загружаю RU-источники (без AI)...");
-      try {
-        const report = await buildRuSourcesReport();
-        await sendTelegramMessage(chatId, formatRuSourcesReport(report));
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        await sendTelegramMessage(chatId, `❌ Ошибка теста RU-источников: ${msg}`);
-      }
-      break;
-    }
-
     case "/queue":
       await sendTelegramMessage(chatId, await buildQueueStatusMessage());
       break;
@@ -419,38 +313,8 @@ async function handleCommand(chatId: number, userId: number | undefined, text: s
       await sendTelegramMessage(chatId, await buildQueuePruneReport());
       break;
 
-    case "/sourcestats":
-      await sendTelegramMessage(chatId, await buildSourceStatsMessage());
-      break;
-
-    case "/observerqueue": {
-      const force = args[0] === "force";
-      await sendTelegramMessage(
-        chatId,
-        force
-          ? "📡 Наблюдатель 2.0: перегенерирую всю очередь (gpt-4o)…"
-          : "📡 Наблюдатель 2.0: обрабатываю очередь без комментариев…"
-      );
-      const result = await backfillObserverComments({ force });
-      await sendTelegramMessage(
-        chatId,
-        [
-          "✅ Наблюдатель — очередь",
-          "",
-          `В очереди: ${result.candidates}`,
-          `Сохранено: ${result.saved}`,
-          `Без мысли (null): ${result.aiNull}`,
-          `Ошибок: ${result.errors}`,
-          "",
-          "При публикации готовые комментарии подставятся автоматически.",
-          "Повторить всё: /observerqueue force",
-        ].join("\n")
-      );
-      break;
-    }
-
     default:
-      await sendTelegramMessage(chatId, "Неизвестная команда. Список: /help или /commands");
+      await sendTelegramMessage(chatId, "Неизвестная команда. Список: /help");
   }
 }
 
@@ -480,7 +344,7 @@ export async function sendDashboardLinksToAdmin(): Promise<boolean> {
 
   if (!chatId) {
     logger.warn(
-      "TELEGRAM_ADMIN_USER_ID not set — напишите боту /start в личку, адрес придёт автоматически"
+      "TELEGRAM_ADMIN_USER_ID not set — напишите боту /start в личку"
     );
     return false;
   }
@@ -514,6 +378,14 @@ export async function startAdminBot(): Promise<void> {
   }
 
   await deleteWebhook();
+
+  const menuOk = await setBotCommands(BOT_COMMANDS);
+  if (menuOk) {
+    logger.info("Telegram command menu registered");
+  } else {
+    logger.warn("Telegram command menu not registered");
+  }
+
   await loadAdmin();
 
   let offset = 0;

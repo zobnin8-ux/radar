@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const settings = await loadSettings();
 
   logger.info("═══════════════════════════════════════");
-  logger.info("  📡 Радар будущего — домашняя версия");
+  logger.info("  📦 Канал находок — гаджеты и находки");
   logger.info("═══════════════════════════════════════");
   logger.info(`Dry-run default: ${settings.dryRun}`);
   logger.info(`Posts: ${settings.maxPostsPerRun}/run, ${settings.maxPostsPerDay}/day`);
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     void runWithAdminTelegramProgress({
       task: "pipeline",
       dryRun: settings.dryRun,
-      title: "🚀 Запуск бота",
+      title: "🔄 Сбор находок",
       run: () => runPipeline({ trigger: "manual" }),
     }).catch((err) => logger.error("Pipeline failed", err));
   } else if (skipInitialPipeline) {

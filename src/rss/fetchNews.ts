@@ -15,11 +15,11 @@ const DEFAULT_HEADERS: Record<string, string> = {
 
 function buildParser(source: RssSourceConfig): Parser {
   const headers = { ...DEFAULT_HEADERS };
+  if (source.url.includes("reddit.com")) {
+    headers["User-Agent"] = "RadarFindsBot/1.0 (gadget channel; contact: t.me/)";
+  }
   if (source.language === "ru") {
     headers["Accept-Language"] = "ru-RU,ru;q=0.9,en;q=0.8";
-    if (source.url.includes("elementy.ru")) {
-      headers.Referer = "https://elementy.ru/";
-    }
   }
 
   return new Parser({
@@ -134,7 +134,7 @@ async function fetchFromFeedUrl(
   feedUrl: string,
   parser: Parser
 ): Promise<NewsItem[]> {
-  const { name: sourceName, tier, trustScore, boxPriority } = source;
+  const { name: sourceName, priority } = source;
   const feed = await parser.parseURL(feedUrl);
   const items: NewsItem[] = [];
 
@@ -160,11 +160,9 @@ async function fetchFromFeedUrl(
       source: sourceName,
       publishedAt,
       description,
-      sourceTier: tier,
-      trustScore,
       language: source.language,
       imageUrl: extractImageUrl(item),
-      boxPriority,
+      priority,
     });
   }
 

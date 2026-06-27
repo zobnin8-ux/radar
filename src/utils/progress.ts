@@ -7,11 +7,11 @@ export type ProgressTask = "pipeline" | "injection" | "box" | "trends" | "github
 
 export const PIPELINE_PHASES = [
   "queue",
-  "rss",
+  "products",
   "filter",
   "analyze",
+  "vision",
   "select",
-  "publish",
 ] as const;
 
 export const INJECT_PHASES = ["select", "publish"] as const;
@@ -57,12 +57,13 @@ export interface ProgressData {
 
 const PHASE_LABELS: Record<string, string> = {
   queue: "Очередь",
-  rss: "RSS-источники",
+  products: "AliExpress",
+  rss: "RSS-ленты",
   filter: "Фильтр",
   analyze: "Анализ (OpenAI)",
-  select: "Отбор",
+  select: "В очередь",
   publish: "Публикация",
-  vision: "Фото и пост",
+  vision: "Чистое фото",
   collect: "Сигналы недели",
   generate: "Генерация (OpenAI)",
   fetch: "GitTrend JSON",
@@ -163,7 +164,7 @@ export class CycleProgress {
       phase: "done",
       current: published,
       total: published,
-      detail: (options.detail ?? "").slice(0, 200),
+      detail: (options.detail ?? "").slice(0, 900),
       startedAt: data.startedAt,
     });
   }
@@ -270,7 +271,7 @@ function defaultTitleForTask(data: ProgressData): string {
     case "weird":
       return "🧩 Странный GitHub";
     default:
-      return "🔄 Боевой цикл";
+      return "🔄 Сбор находок";
   }
 }
 
@@ -342,6 +343,31 @@ export function buildPhaseViews(data: ProgressData): ProgressPhaseView[] {
   });
 }
 
+export function explainProgressHuman(data: ProgressData): string | null {
+  if (data.status !== "running") return null;
+
+  const detail = data.detail ? ` (${data.detail})` : "";
+  const counter =
+    data.total > 0 ? ` ${data.current}/${data.total}` : "";
+
+  switch (data.phase) {
+    case "queue":
+      return `⏳ Подготовка очереди${detail || counter}`;
+    case "products":
+      return `⏳ Загрузка товаров с AliExpress${counter}${detail ? ` — ${data.detail}` : ""}`;
+    case "filter":
+      return `⏳ Фильтрация и отсев${counter}${detail}`;
+    case "analyze":
+      return `⏳ OpenAI оценивает WOW / WANT / SHARE${counter}${detail}`;
+    case "vision":
+      return `⏳ Проверка фото${counter}${detail}`;
+    case "select":
+      return `⏳ Добавление в очередь публикаций${counter}${detail}`;
+    default:
+      return `⏳ ${PHASE_LABELS[data.phase] ?? data.phase}${counter}${detail}`;
+  }
+}
+
 export function formatTelegramProgress(
   data: ProgressData,
   options: { title?: string } = {}
@@ -376,8 +402,11 @@ export function formatTelegramProgress(
       lines.push(data.detail.slice(0, 200));
     }
   } else if (data.status === "done") {
-    if (data.current > 0) lines.push(`Опубликовано: ${data.current}`);
-    if (data.detail) lines.push(data.detail);
+    if (data.detail) {
+      lines.push(data.detail);
+    } else if (data.current > 0) {
+      lines.push(`Опубликовано: ${data.current}`);
+    }
   } else if (data.status === "error") {
     lines.push(data.detail || "См. data/server.log");
   }

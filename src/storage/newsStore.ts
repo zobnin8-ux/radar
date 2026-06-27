@@ -1,26 +1,21 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getSourceLanguage } from "../rss/sources.js";
-import type { AnalyzedNews, NewsItem, NewsRecord } from "../types.js";
-import { PUBLISHABLE_LEVELS } from "../types.js";
+import type { AnalyzedFind, NewsItem, NewsRecord } from "../types.js";
 import { isSameCalendarDay } from "../utils/date.js";
 import {
   analyzedToQueuedRecord,
   getQueuedRecordsFrom,
+  isActiveQueueRecord,
   markRecordPublished,
   processQueueRecords,
+  recordToAnalyzedFind,
   type QueueMaintainResult,
 } from "./queueManager.js";
+import { archiveQueueItem } from "./queueArchiveStore.js";
 import { logger } from "../utils/logger.js";
+import { normalizeProductUrl } from "../utils/productUrl.js";
 import { isAlreadyPublished, loadPublished } from "./publishedStore.js";
-import {
-  isKnownObservationUrl,
-  loadObservations,
-  observationToNewsRecord,
-  saveObservation,
-  analyzedToObservation,
-  mergeObservations,
-} from "./observationsStore.js";
 
 const DATA_PATH = join(process.cwd(), "data", "news.json");
 
@@ -56,65 +51,23 @@ async function persist(records: NewsRecord[]): Promise<void> {
 
 export async function isKnownUrl(url: string): Promise<boolean> {
   const records = await loadNews();
-  const normalized = url.trim().toLowerCase();
-  if (records.some((r) => r.url.trim().toLowerCase() === normalized)) return true;
-  return isKnownObservationUrl(url);
+  const normalized = normalizeProductUrl(url);
+  return records.some((r) => normalizeProductUrl(r.url) === normalized);
 }
 
-/** URL already in news.json or published.json — skip re-analysis */
 export async function isSeenUrl(url: string): Promise<boolean> {
   if (await isKnownUrl(url)) return true;
   return isAlreadyPublished(url);
 }
 
-/** Перенос observation из news.json → observations.json */
-export async function migrateObservationsFromNews(): Promise<number> {
-  const records = await loadNews();
-  const toMigrate = [];
-  const remaining: NewsRecord[] = [];
-
-  for (const record of records) {
-    if (record.level !== "observation") {
-      remaining.push(record);
-      continue;
-    }
-    toMigrate.push({
-      title: record.title,
-      url: record.url,
-      source: record.source,
-      date: record.discoveredAt,
-      category: record.category,
-      technology: record.technology?.trim() || record.reason?.slice(0, 120) || record.category,
-      observerComment: record.observerComment ?? null,
-      level: "observation" as const,
-      score: record.score,
-      reason: record.reason,
-    });
-  }
-
-  const migrated = await mergeObservations(toMigrate);
-  if (toMigrate.length > 0) {
-    await persist(remaining);
-    if (migrated > 0) {
-      logger.info(`Migrated ${migrated} observation(s) to observations.json`);
-    }
-  }
-
-  return migrated;
-}
-
-export { saveObservation, analyzedToObservation };
-
-/** Backfill news.json from published.json (e.g. after upgrade or empty news.json) */
 export async function syncPublishedToNews(): Promise<number> {
   const published = await loadPublished();
   const records = await loadNews();
-  const known = new Set(records.map((r) => r.url.trim().toLowerCase()));
+  const known = new Set(records.map((r) => normalizeProductUrl(r.url)));
   let added = 0;
 
   for (const pub of published) {
-    if (pub.postType === "digest") continue;
-    const normalized = pub.url.trim().toLowerCase();
+    const normalized = normalizeProductUrl(pub.url);
     if (known.has(normalized)) continue;
 
     records.push({
@@ -123,12 +76,19 @@ export async function syncPublishedToNews(): Promise<number> {
       source: pub.source,
       newsPublishedAt: pub.publishedAt,
       discoveredAt: pub.postedAt,
-      level: pub.level ?? "signal",
-      category: pub.category ?? "other",
-      score: pub.score,
-      impactHorizon: "now",
+      category: pub.category ?? "gadgets",
+      wow: 0,
+      share: 0,
+      buy: 0,
+      curiosity: 0,
+      finalScore: pub.finalScore ?? 0,
+      productName: null,
+      price: null,
+      whatItIs: "",
+      whyInteresting: "",
       reason: "Synced from published history",
       postedAt: pub.postedAt,
+      status: "published",
     });
     known.add(normalized);
     added++;
@@ -142,26 +102,6 @@ export async function syncPublishedToNews(): Promise<number> {
   return added;
 }
 
-export function analyzedToRecord(item: AnalyzedNews): NewsRecord {
-  return {
-    url: item.news.url,
-    title: item.news.title,
-    source: item.news.source,
-    newsPublishedAt: item.news.publishedAt.toISOString(),
-    discoveredAt: new Date().toISOString(),
-    level: item.analysis.level,
-    category: item.analysis.category,
-    score: item.analysis.score,
-    impactHorizon: item.analysis.impactHorizon,
-    reason: item.analysis.reason,
-    observerComment: item.analysis.observerComment,
-    technology: item.analysis.technology,
-    trustScore: item.news.trustScore,
-    sourceTier: item.news.sourceTier,
-  };
-}
-
-/** Исключение по политике контента — URL больше не обрабатывается */
 export async function markContentPolicyExcluded(
   item: Pick<NewsItem, "url" | "title" | "source" | "publishedAt">,
   reason: string
@@ -169,7 +109,6 @@ export async function markContentPolicyExcluded(
   await markPrefilterRejected(item, `Content policy: ${reason}`);
 }
 
-/** Помечает URL как обработанный без AI — не анализировать повторно */
 export async function markPrefilterRejected(
   item: Pick<NewsItem, "url" | "title" | "source" | "publishedAt">,
   reason: string
@@ -180,18 +119,26 @@ export async function markPrefilterRejected(
     source: item.source,
     newsPublishedAt: item.publishedAt.toISOString(),
     discoveredAt: new Date().toISOString(),
-    level: "observation",
-    category: "other",
-    score: 1,
-    impactHorizon: "now",
+    category: "gadgets",
+    wow: 0,
+    share: 0,
+    buy: 0,
+    curiosity: 0,
+    finalScore: 0,
+    productName: null,
+    price: null,
+    whatItIs: "",
+    whyInteresting: "",
     reason: `Pre-filtered: ${reason}`,
+    status: "archived",
+    archiveReason: reason,
   });
 }
 
 export async function saveNewsRecord(record: NewsRecord): Promise<void> {
   const records = await loadNews();
-  const normalized = record.url.trim().toLowerCase();
-  const existing = records.findIndex((r) => r.url.trim().toLowerCase() === normalized);
+  const normalized = normalizeProductUrl(record.url);
+  const existing = records.findIndex((r) => normalizeProductUrl(r.url) === normalized);
   if (existing >= 0) {
     const prev = records[existing];
     records[existing] = {
@@ -207,27 +154,32 @@ export async function saveNewsRecord(record: NewsRecord): Promise<void> {
   await persist(records);
 }
 
-export function recordToAnalyzed(record: NewsRecord): AnalyzedNews {
-  return {
-    news: {
-      title: record.title,
-      url: record.url,
-      source: record.source,
-      publishedAt: new Date(record.newsPublishedAt),
-      trustScore: record.trustScore,
-      sourceTier: record.sourceTier,
-      language: getSourceLanguage(record.source),
-    },
-    analysis: {
-      level: record.level,
-      score: record.score,
-      category: record.category,
-      impactHorizon: record.impactHorizon,
-      reason: record.reason,
-      observerComment: record.observerComment ?? null,
-      technology: record.technology ?? null,
-    },
-  };
+export function recordToAnalyzed(record: NewsRecord): AnalyzedFind {
+  return recordToAnalyzedFind(record);
+}
+
+export async function clearPublicationQueue(
+  reason = "Queue reset (TZ v2 migration)"
+): Promise<number> {
+  const records = await loadNews();
+  let cleared = 0;
+  const remaining: NewsRecord[] = [];
+
+  for (const record of records) {
+    if (!isActiveQueueRecord(record)) {
+      remaining.push(record);
+      continue;
+    }
+    await archiveQueueItem(record, "archived", reason);
+    cleared++;
+  }
+
+  if (cleared > 0) {
+    await persist(remaining);
+    logger.info(`Publication queue cleared: ${cleared} item(s) archived`);
+  }
+
+  return cleared;
 }
 
 export async function maintainPublicationQueue(): Promise<QueueMaintainResult> {
@@ -237,11 +189,16 @@ export async function maintainPublicationQueue(): Promise<QueueMaintainResult> {
   return result;
 }
 
-/** Ready to publish — smart queue (TTL, score cap, dynamic ranking) */
 export async function getPublishQueue(): Promise<NewsRecord[]> {
   const { records } = await processQueueRecords(await loadNews());
   await persist(records);
-  return getQueuedRecordsFrom(records);
+  const queued = getQueuedRecordsFrom(records);
+  const out: NewsRecord[] = [];
+  for (const record of queued) {
+    if (await isAlreadyPublished(record.url)) continue;
+    out.push(record);
+  }
+  return out;
 }
 
 export { analyzedToQueuedRecord };
@@ -251,22 +208,21 @@ export async function countPublishQueue(): Promise<number> {
   return queue.length;
 }
 
-const TREND_DAYS = 7;
 const QUEUE_LIST_LIMIT = 25;
-const OBS_LIST_LIMIT = 15;
 
 export interface ArchiveItemView {
   title: string;
   url: string;
   source: string;
   category: NewsRecord["category"];
-  level: NewsRecord["level"];
-  score: number;
-  finalScore?: number;
-  impactHorizon: NewsRecord["impactHorizon"];
+  curiosity: number;
+  wow: number;
+  share: number;
+  buy: number;
+  finalScore: number;
+  productName: string | null;
   discoveredAt: string;
   queuedAt?: string;
-  sourceTier?: 1 | 2;
   postedAt?: string;
 }
 
@@ -276,13 +232,14 @@ function toArchiveItem(record: NewsRecord): ArchiveItemView {
     url: record.url,
     source: record.source,
     category: record.category,
-    level: record.level,
-    score: record.score,
+    curiosity: record.curiosity ?? 0,
+    wow: record.wow,
+    share: record.share,
+    buy: record.buy ?? 0,
     finalScore: record.finalScore,
-    impactHorizon: record.impactHorizon,
+    productName: record.productName,
     discoveredAt: record.discoveredAt,
     queuedAt: record.queuedAt,
-    sourceTier: record.sourceTier,
     postedAt: record.postedAt,
   };
 }
@@ -290,13 +247,10 @@ function toArchiveItem(record: NewsRecord): ArchiveItemView {
 export interface ArchiveOverview {
   counts: {
     queue: number;
-    observations: number;
-    trendSignals: number;
     publishedToday: number;
     archiveTotal: number;
   };
   queue: ArchiveItemView[];
-  observations: ArchiveItemView[];
   publishedToday: ArchiveItemView[];
 }
 
@@ -304,48 +258,23 @@ export async function getArchiveOverview(): Promise<ArchiveOverview> {
   const records = await loadNews();
   const published = await loadPublished();
   const now = new Date();
-  const trendSince = new Date();
-  trendSince.setDate(trendSince.getDate() - TREND_DAYS);
-
   const queue = await getPublishQueue();
 
-  const obsRecords = await loadObservations();
-  const observations = obsRecords
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .map((o) => ({
-      title: o.title,
-      url: o.url,
-      source: o.source,
-      category: o.category,
-      level: "observation" as const,
-      score: o.score ?? 5,
-      impactHorizon: "1-3 years" as const,
-      discoveredAt: o.date,
-      sourceTier: undefined,
-      postedAt: undefined,
-    }));
-
-  const trendSignals = (await getWeeklyTrendSources(trendSince)).length;
-
   const publishedTodayRecords = published
-    .filter(
-      (r) =>
-        r.postType !== "digest" &&
-        r.postType !== "trends" &&
-        isSameCalendarDay(new Date(r.postedAt), now)
-    )
-    .sort(
-      (a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime()
-    );
+    .filter((r) => isSameCalendarDay(new Date(r.postedAt), now))
+    .sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
 
   const publishedToday: ArchiveItemView[] = publishedTodayRecords.map((r) => ({
     title: r.title,
     url: r.url,
     source: r.source,
-    category: r.category ?? "other",
-    level: r.level ?? "signal",
-    score: r.score,
-    impactHorizon: "now",
+    category: r.category ?? "gadgets",
+    wow: 0,
+    share: 0,
+    buy: 0,
+    curiosity: 0,
+    finalScore: r.finalScore ?? 0,
+    productName: null,
     discoveredAt: r.postedAt,
     postedAt: r.postedAt,
   }));
@@ -353,13 +282,10 @@ export async function getArchiveOverview(): Promise<ArchiveOverview> {
   return {
     counts: {
       queue: queue.length,
-      observations: observations.length,
-      trendSignals,
       publishedToday: publishedTodayRecords.length,
-      archiveTotal: records.length + obsRecords.length,
+      archiveTotal: records.length,
     },
     queue: queue.slice(0, QUEUE_LIST_LIMIT).map(toArchiveItem),
-    observations: observations.slice(0, OBS_LIST_LIMIT),
     publishedToday,
   };
 }
@@ -370,19 +296,6 @@ export async function markPosted(url: string, postedAt: string): Promise<void> {
   await persist(records);
 }
 
-const MIN_TREND_SCORE = 5;
-
-/** Сигналы недели для сводки трендов: опубликованные + наблюдения + очередь */
-export async function getWeeklyTrendSources(since: Date): Promise<NewsRecord[]> {
-  const records = await loadNews();
-  const fromNews = records.filter(
-    (r) =>
-      !r.reason.startsWith("Pre-filtered") &&
-      r.score >= MIN_TREND_SCORE &&
-      new Date(r.discoveredAt) >= since
-  );
-  const fromObs = (await loadObservations())
-    .filter((o) => (o.score ?? 5) >= MIN_TREND_SCORE && new Date(o.date) >= since)
-    .map(observationToNewsRecord);
-  return [...fromNews, ...fromObs];
+export async function queueFind(item: AnalyzedFind, imageUrl: string): Promise<void> {
+  await saveNewsRecord(analyzedToQueuedRecord(item, imageUrl));
 }

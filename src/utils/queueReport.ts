@@ -1,43 +1,19 @@
 import { config } from "../config.js";
 import { countArchivedSince } from "../storage/queueArchiveStore.js";
-import { getPublishQueue } from "../storage/newsStore.js";
+import { getPublishQueue, maintainPublicationQueue } from "../storage/newsStore.js";
 import { countPostsSince } from "../storage/publishedStore.js";
-import { maintainPublicationQueue } from "../storage/newsStore.js";
-import type { MaturityLevel } from "../types.js";
 import { humanizeTimeAgoRu } from "./date.js";
-
-const LEVEL_EMOJI: Record<MaturityLevel, string> = {
-  observation: "🟢",
-  signal: "🟡",
-  impact: "🔴",
-  breakthrough: "🚀",
-  failure: "⚫",
-};
-
-const LEVEL_LABEL: Record<MaturityLevel, string> = {
-  observation: "Наблюдение",
-  signal: "Сигнал",
-  impact: "Влияние",
-  breakthrough: "Прорыв",
-  failure: "Сбой системы",
-};
 
 export async function buildQueueStatusMessage(): Promise<string> {
   const queue = await getPublishQueue();
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const byLevel: Record<string, number> = {
-    signal: 0,
-    impact: 0,
-    breakthrough: 0,
-    failure: 0,
-  };
-
   let newestMs = 0;
   let oldestMs = Infinity;
+  let totalScore = 0;
 
   for (const item of queue) {
-    byLevel[item.level] = (byLevel[item.level] ?? 0) + 1;
+    totalScore += item.finalScore;
     const t = new Date(item.queuedAt ?? item.discoveredAt).getTime();
     if (t > newestMs) newestMs = t;
     if (t < oldestMs) oldestMs = t;
@@ -56,24 +32,26 @@ export async function buildQueueStatusMessage(): Promise<string> {
       ? humanizeTimeAgoRu(new Date(oldestMs).toISOString())
       : "—";
 
+  const avgScore = queue.length > 0 ? Math.round(totalScore / queue.length) : 0;
+
+  const top = queue.slice(0, 5).map((item, i) => {
+    return `${i + 1}. ${item.title.slice(0, 50)}… — ${item.finalScore} (C${item.curiosity ?? 0}/W${item.wow}/S${item.share}/B${item.buy ?? 0})`;
+  });
+
   const lines = [
-    "📦 Очередь публикаций",
+    "📦 Очередь находок",
     "",
-    `Всего в очереди: ${queue.length} (макс. ${config.MAX_PUBLICATION_QUEUE_SIZE})`,
+    `Всего: ${queue.length} (макс. ${config.MAX_PUBLICATION_QUEUE_SIZE})`,
+    `Средний score: ${avgScore}`,
     "",
-    `Самая свежая новость: ${newestLabel} назад`,
-    `Самая старая новость: ${oldestLabel} назад`,
+    `Самая свежая: ${newestLabel} назад`,
+    `Самая старая: ${oldestLabel} назад`,
     "",
-    "По уровням:",
-    `${LEVEL_EMOJI.signal} ${LEVEL_LABEL.signal}: ${byLevel.signal}`,
-    `${LEVEL_EMOJI.impact} ${LEVEL_LABEL.impact}: ${byLevel.impact}`,
-    `${LEVEL_EMOJI.breakthrough} ${LEVEL_LABEL.breakthrough}: ${byLevel.breakthrough}`,
-    `${LEVEL_EMOJI.failure} ${LEVEL_LABEL.failure}: ${byLevel.failure}`,
-    "",
-    "За последние 24 часа:",
+    ...(top.length > 0 ? ["Топ:", ...top, ""] : []),
+    "За 24 ч:",
     `Опубликовано: ${published24h}`,
     `Истекло: ${expired24h}`,
-    `Вытеснено из очереди: ${dropped24h}`,
+    `Вытеснено: ${dropped24h}`,
   ];
 
   return lines.join("\n");
@@ -88,7 +66,7 @@ export async function buildQueuePruneReport(): Promise<string> {
     `Активных: ${result.remaining}`,
     `Истекло (TTL): ${result.expired}`,
     `Вытеснено (лимит ${config.MAX_PUBLICATION_QUEUE_SIZE}): ${result.dropped}`,
-    `Ниже порога → наблюдения: ${result.belowThreshold}`,
+    `Ниже порога: ${result.belowThreshold}`,
     `Рейтинг пересчитан: ${result.scoresUpdated}`,
   ].join("\n");
 }

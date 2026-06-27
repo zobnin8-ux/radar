@@ -1,5 +1,5 @@
-import type { AnalyzedNews, NewsRecord } from "../types.js";
-import { PUBLISHABLE_LEVELS } from "../types.js";
+import { getSourceLanguage } from "../rss/sources.js";
+import type { AnalyzedFind, NewsRecord } from "../types.js";
 import {
   computeExpiresAt,
   meetsQueueMinScore,
@@ -8,8 +8,8 @@ import {
 } from "../utils/queueScore.js";
 import { logger } from "../utils/logger.js";
 import { config } from "../config.js";
-import { analyzedToObservation, saveObservation } from "./observationsStore.js";
 import { archiveQueueItem } from "./queueArchiveStore.js";
+import { normalizeProductUrl } from "../utils/productUrl.js";
 
 export interface QueueMaintainResult {
   expired: number;
@@ -19,12 +19,11 @@ export interface QueueMaintainResult {
   scoresUpdated: number;
 }
 
-function isActiveQueueRecord(record: NewsRecord): boolean {
+export function isActiveQueueRecord(record: NewsRecord): boolean {
   if (record.postedAt) return false;
   if (record.status === "published") return false;
-  if (!PUBLISHABLE_LEVELS.includes(record.level)) return false;
-  if (record.status === "queued") return true;
-  return record.status === undefined;
+  if (record.status === "archived") return false;
+  return record.status === "queued" || record.status === undefined;
 }
 
 function normalizeQueueRecord(record: NewsRecord): NewsRecord {
@@ -34,34 +33,10 @@ function normalizeQueueRecord(record: NewsRecord): NewsRecord {
     status: "queued",
     queuedAt,
     expiresAt:
-      record.expiresAt ?? computeExpiresAt(record.level, new Date(queuedAt)).toISOString(),
+      record.expiresAt ?? computeExpiresAt(new Date(queuedAt)).toISOString(),
     archiveReason: null,
   };
   return refreshQueueScores(normalized);
-}
-
-async function moveToObservation(record: NewsRecord, reason: string): Promise<void> {
-  await saveObservation(
-    analyzedToObservation({
-      news: {
-        title: record.title,
-        url: record.url,
-        source: record.source,
-        publishedAt: new Date(record.newsPublishedAt),
-        trustScore: record.trustScore,
-        sourceTier: record.sourceTier,
-      },
-      analysis: {
-        level: record.level,
-        score: record.score,
-        category: record.category,
-        impactHorizon: record.impactHorizon,
-        reason: `${reason}. ${record.reason}`,
-        observerComment: record.observerComment ?? null,
-        technology: record.technology ?? null,
-      },
-    })
-  );
 }
 
 export async function processQueueRecords(
@@ -84,11 +59,12 @@ export async function processQueueRecords(
 
     const normalized = normalizeQueueRecord(record);
 
-    if (!meetsQueueMinScore(normalized.level, normalized.score, normalized.source)) {
+    if (!meetsQueueMinScore(normalized.finalScore)) {
       belowThreshold++;
-      await moveToObservation(
+      await archiveQueueItem(
         normalized,
-        `Below queue threshold (min score for ${normalized.level})`
+        "dropped_from_queue",
+        `Below queue threshold (min ${config.FIND_MIN_SCORE})`
       );
       continue;
     }
@@ -112,7 +88,7 @@ export async function processQueueRecords(
   activeQueue.length = 0;
   activeQueue.push(...refreshedQueue);
 
-  activeQueue.sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0));
+  activeQueue.sort((a, b) => b.finalScore - a.finalScore);
 
   const maxSize = config.MAX_PUBLICATION_QUEUE_SIZE;
   const kept = activeQueue.slice(0, maxSize);
@@ -145,7 +121,7 @@ export async function processQueueRecords(
   };
 }
 
-export function analyzedToQueuedRecord(item: AnalyzedNews): NewsRecord {
+export function analyzedToQueuedRecord(item: AnalyzedFind, imageUrl: string): NewsRecord {
   const now = new Date();
   const nowIso = now.toISOString();
   const record: NewsRecord = {
@@ -154,18 +130,25 @@ export function analyzedToQueuedRecord(item: AnalyzedNews): NewsRecord {
     source: item.news.source,
     newsPublishedAt: item.news.publishedAt.toISOString(),
     discoveredAt: nowIso,
-    level: item.analysis.level,
     category: item.analysis.category,
-    score: item.analysis.score,
-    impactHorizon: item.analysis.impactHorizon,
+    curiosity: item.analysis.rating.curiosity,
+    wow: item.analysis.rating.wow,
+    share: item.analysis.rating.share,
+    buy: item.analysis.rating.buy,
+    finalScore: item.analysis.finalScore,
+    productName: item.analysis.productName,
+    price: item.news.price ?? item.analysis.price,
+    buyUrl: item.news.buyUrl ?? item.news.url,
+    sourceKind: item.news.sourceKind,
+    rating: item.news.rating,
+    orders: item.news.orders,
+    whatItIs: item.analysis.whatItIs,
+    whyInteresting: item.analysis.whyInteresting,
     reason: item.analysis.reason,
-    observerComment: item.analysis.observerComment,
-    technology: item.analysis.technology,
-    trustScore: item.news.trustScore,
-    sourceTier: item.news.sourceTier,
+    imageUrl,
     status: "queued",
     queuedAt: nowIso,
-    expiresAt: computeExpiresAt(item.analysis.level, now).toISOString(),
+    expiresAt: computeExpiresAt(now).toISOString(),
     archiveReason: null,
   };
   return refreshQueueScores(record);
@@ -174,13 +157,49 @@ export function analyzedToQueuedRecord(item: AnalyzedNews): NewsRecord {
 export function getQueuedRecordsFrom(records: NewsRecord[]): NewsRecord[] {
   return records
     .filter((r) => r.status === "queued" && !r.postedAt)
-    .sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0));
+    .sort((a, b) => b.finalScore - a.finalScore);
 }
 
 export function markRecordPublished(records: NewsRecord[], url: string, postedAt: string): void {
-  const normalized = url.trim().toLowerCase();
-  const record = records.find((r) => r.url.trim().toLowerCase() === normalized);
+  const normalized = normalizeProductUrl(url);
+  const record = records.find((r) => normalizeProductUrl(r.url) === normalized);
   if (!record) return;
   record.postedAt = postedAt;
   record.status = "published";
+}
+
+export function recordToAnalyzedFind(record: NewsRecord): AnalyzedFind {
+  return {
+    news: {
+      title: record.title,
+      url: record.url,
+      source: record.source,
+      publishedAt: new Date(record.newsPublishedAt),
+      imageUrl: record.imageUrl,
+      price: record.price ?? undefined,
+      buyUrl: record.buyUrl ?? undefined,
+      sourceKind: record.sourceKind,
+      rating: record.rating,
+      orders: record.orders,
+      language: getSourceLanguage(record.source),
+    },
+    analysis: {
+      isPhysicalProduct: true,
+      productName: record.productName,
+      category: record.category,
+      rating: {
+        curiosity: record.curiosity ?? 0,
+        wow: record.wow,
+        share: record.share,
+        buy: record.buy ?? 0,
+      },
+      finalScore: record.finalScore,
+      whatItIs: record.whatItIs,
+      whyInteresting: record.whyInteresting,
+      price: record.price,
+      hasDeviceImage: !!record.imageUrl,
+      rejectReason: null,
+      reason: record.reason,
+    },
+  };
 }

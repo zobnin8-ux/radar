@@ -5,6 +5,7 @@ import {
 } from "../storage/newsStore.js";
 import { loadSettings } from "../storage/settingsStore.js";
 import {
+  countChannelPostsToday,
   countPostsToday,
   count3DNewsPostsToday,
   countArxivPostsToday,
@@ -55,12 +56,13 @@ export async function publishFromQueue(options: {
     return { publishedCount: 0, queueBefore: 0, requested: limit };
   }
 
+  const channelPostsToday = await countChannelPostsToday();
   const postsToday = await countPostsToday();
   const ruPostsToday = await countRuPostsToday();
   const arxivPostsToday = await countArxivPostsToday();
   const iePostsToday = await countInterestingEngineeringPostsToday();
   const threeDNewsPostsToday = await count3DNewsPostsToday();
-  const remainingToday = Math.max(0, settings.maxPostsPerDay - postsToday);
+  const remainingToday = Math.max(0, settings.maxPostsPerDay - channelPostsToday);
   const effectiveLimit = Math.min(limit, remainingToday);
 
   if (effectiveLimit === 0) {

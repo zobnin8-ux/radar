@@ -1,483 +1,265 @@
-import { analyzeForPipeline } from "../ai/analyzeNews.js";
-import { fetchAllNews } from "../rss/fetchNews.js";
+import { selectCleanProductImage } from "../ai/verifyProductPhoto.js";
+import { analyzeFinds } from "../ai/analyzeFinds.js";
+import { checkContentPolicy } from "../filters/contentPolicy.js";
+import { fetchProducts } from "../sources/index.js";
 import {
-  analyzedToQueuedRecord,
   countPublishQueue,
   getPublishQueue,
   isSeenUrl,
   maintainPublicationQueue,
   markContentPolicyExcluded,
   markPrefilterRejected,
-  saveNewsRecord,
-  migrateObservationsFromNews,
-  saveObservation,
-  analyzedToObservation,
+  queueFind,
   syncPublishedToNews,
 } from "../storage/newsStore.js";
-import { meetsQueueMinScore } from "../utils/queueScore.js";
-import { getEnabledSources, loadSettings } from "../storage/settingsStore.js";
-import {
-  countPostsToday,
-  countArxivPostsToday,
-  count3DNewsPostsToday,
-  countInterestingEngineeringPostsToday,
-  countRuPostsToday,
-  getCategoryCountsToday,
-  getHorizonCountsToday,
-  loadPublished,
-} from "../storage/publishedStore.js";
-import { MAX_ARXIV_POSTS_PER_DAY, MAX_3DNEWS_POSTS_PER_DAY, MAX_RU_POSTS_PER_DAY, isResearchFeedSource } from "../rss/sources.js";
-import { applyRuDailyCap } from "../utils/ruPublicationCap.js";
-import {
-  applyArxivDailyCap,
-  apply3DNewsDailyCap,
-  applyInterestingEngineeringCap,
-} from "../utils/sourcePublicationCap.js";
-import { selectWithClusterLimits } from "../utils/clusterSelect.js";
-import { passesReaderHookGate } from "../utils/readerHook.js";
-import { applyMinAiReserve } from "../utils/minAiQuota.js";
-import { selectForPublication } from "../utils/publicationSelect.js";
-import { pruneRssErrors, recordLastRun, setPipelineRunning } from "../storage/stateStore.js";
+import { countChannelPostsToday } from "../storage/publishedStore.js";
+import { ALIEXPRESS_KEYWORD_COUNT } from "../sources/aliexpress.js";
+import { loadSettings } from "../storage/settingsStore.js";
+import { recordLastRun } from "../storage/stateStore.js";
+import type { AnalyzedFind } from "../types.js";
 import { dedupeNews } from "../utils/dedupe.js";
-import { filterByContentPolicy } from "../filters/contentPolicy.js";
+import { verifyImageUrlAccessible } from "../utils/deviceImage.js";
+import { formatPipelineRunMessage, type PipelineRunStats } from "../utils/pipelineMessage.js";
 import { prefilterNews } from "../utils/prefilter.js";
-import { isWithinLast24Hours } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
-import { bindProgress, getActiveProgress, updateProgress } from "../utils/progress.js";
-import { endTask, isInjectionRunning, tryBeginTask } from "./activeTask.js";
-import { publishFromQueue } from "./publishFromQueue.js";
-import { publishPosts } from "./publishPosts.js";
+import { updateProgress } from "../utils/progress.js";
+import { endTask, tryBeginTask } from "./activeTask.js";
 
-export type RunTrigger = "cron" | "manual" | "telegram" | "dashboard";
+export type PipelineTrigger = "cron" | "manual" | "telegram" | "dashboard";
 
-export interface RunOptions {
-  trigger: RunTrigger;
+export interface PipelineOptions {
+  trigger: PipelineTrigger;
   dryRun?: boolean;
-  /** Только RSS + очередь, без публикации (cron при равномерной публикации) */
-  collectOnly?: boolean;
 }
 
 export interface PipelineResult {
   success: boolean;
   publishedCount: number;
-  observationsSaved: number;
   message: string;
+  stats: PipelineRunStats;
 }
 
-export { isPipelineRunning } from "./activeTask.js";
-
-export async function runPipeline(options: RunOptions): Promise<PipelineResult> {
-  if (isInjectionRunning()) {
-    return {
-      success: false,
-      publishedCount: 0,
-      observationsSaved: 0,
-      message: "Сначала дождитесь окончания инъекции",
-    };
-  }
-
+export async function runPipeline(options: PipelineOptions): Promise<PipelineResult> {
   if (!tryBeginTask("pipeline")) {
     return {
       success: false,
       publishedCount: 0,
-      observationsSaved: 0,
-      message: "Pipeline already running",
+      message: "Пайплайн уже выполняется",
+      stats: { publishedCount: 0, postsToday: 0, maxPostsPerDay: 0 },
     };
   }
 
-  await setPipelineRunning(true);
-
-  const settings = await loadSettings();
-  const dryRun = options.dryRun ?? settings.dryRun;
-  const collectOnly =
-    options.collectOnly ??
-    (settings.publishEvenSpread && options.trigger === "cron");
-  let publishedCount = 0;
-  let observationsSaved = 0;
-  let queuedNew = 0;
-
-  const progress = getActiveProgress() ?? bindProgress("pipeline", dryRun);
+  const stats: PipelineRunStats = {
+    publishedCount: 0,
+    postsToday: 0,
+    maxPostsPerDay: 0,
+    collectOnly: true,
+  };
 
   try {
-    logger.info(`Starting pipeline (${options.trigger}, dryRun=${dryRun}, collectOnly=${collectOnly})...`);
-    await updateProgress("queue", { detail: "Подготовка…" });
+    const settings = await loadSettings();
+    const dryRun = options.dryRun ?? settings.dryRun;
+    stats.dryRun = dryRun;
+    stats.maxPostsPerDay = settings.maxPostsPerDay;
+    stats.postsToday = await countChannelPostsToday();
 
-    const enabledSources = getEnabledSources(settings);
-    await pruneRssErrors(enabledSources.map((s) => s.name));
-
-    await loadPublished();
+    await updateProgress("queue", { detail: "Синхронизация и очередь…" });
     await syncPublishedToNews();
-    await migrateObservationsFromNews();
+    const queueMaint = await maintainPublicationQueue();
+    stats.queueBefore = queueMaint.remaining;
+    stats.belowQueueThreshold = queueMaint.belowThreshold;
+    await updateProgress("queue", { detail: `В очереди ${queueMaint.remaining}` });
 
-    const postsToday = await countPostsToday();
-    let ruPostsToday = await countRuPostsToday();
-    let arxivPostsToday = await countArxivPostsToday();
-    let iePostsToday = await countInterestingEngineeringPostsToday();
-    let threeDNewsPostsToday = await count3DNewsPostsToday();
-    const remainingToday = settings.maxPostsPerDay - postsToday;
-    const postsThisRun =
-      remainingToday > 0
-        ? Math.min(settings.maxPostsPerRun, remainingToday)
-        : 0;
-    const categoryCounts = await getCategoryCountsToday();
-    const horizonCounts = await getHorizonCountsToday();
-    const quotaMax = settings.categoryQuotaMax ?? 0;
-    const horizonMix = settings.horizonMixPercent ?? 0;
-    const minAi = settings.minAiPostsPerDay ?? 0;
+    await updateProgress("products", {
+      current: 0,
+      total: ALIEXPRESS_KEYWORD_COUNT,
+      detail: "Загрузка товаров…",
+    });
+    const allProducts = await fetchProducts();
+    stats.rssTotal = allProducts.length;
+    stats.rssFresh = allProducts.length;
 
-    if (minAi > 0) {
-      logger.info(
-        `AI minimum: ${minAi}/day (today: ${categoryCounts.ai ?? 0}, priority tier-1/impact/score≥7 anytime)`
-      );
-    }
-    if (quotaMax > 0) {
-      logger.info(`Category quota: max ${quotaMax} post(s) per category per day`);
-    }
-    if (horizonMix > 0) {
-      logger.info(
-        `Horizon mix: target ${horizonMix}% long-term (today: ${horizonCounts.now} now / ${horizonCounts.future} future)`
-      );
-    }
-    logger.info(`RU sources cap: max ${MAX_RU_POSTS_PER_DAY}/day (today: ${ruPostsToday})`);
-    logger.info(`arXiv cap: max ${MAX_ARXIV_POSTS_PER_DAY}/day (today: ${arxivPostsToday})`);
-    logger.info(`3DNews cap: max ${MAX_3DNEWS_POSTS_PER_DAY}/day (today: ${threeDNewsPostsToday})`);
-
-    if (!dryRun) {
-      const pruned = await maintainPublicationQueue();
-      if (pruned.expired > 0 || pruned.dropped > 0) {
-        logger.info(
-          `Queue pruned: ${pruned.expired} expired, ${pruned.dropped} dropped, ${pruned.remaining} active`
-        );
-      }
-    }
-
-    const queueBefore = await getPublishQueue();
-    if (queueBefore.length > 0) {
-      logger.info(`Publish queue: ${queueBefore.length} item(s) waiting`);
-    }
-
-    if (collectOnly) {
-      logger.info("Collect-only mode — RSS and queue, no publishing (even spread handles posts)");
-    }
-
-    if (!collectOnly && postsThisRun === 0) {
-      logger.info(
-        `Daily publish limit reached (${postsToday}/${settings.maxPostsPerDay}), will still check sources and save observations`
-      );
-    } else if (!collectOnly && queueBefore.length > 0) {
-      await updateProgress("queue", {
-        current: 0,
-        total: postsThisRun,
-        detail: `${queueBefore.length} в очереди`,
-      });
-      const fromQueueResult = await publishFromQueue({
-        limit: postsThisRun,
-        dryRun,
-        onProgress: (current, total, title) =>
-          void updateProgress("queue", { current, total, detail: title.slice(0, 80) }),
-      });
-      publishedCount += fromQueueResult.publishedCount;
-    } else if (collectOnly && queueBefore.length > 0) {
-      logger.info(`Collect-only: ${queueBefore.length} item(s) waiting in queue`);
-    }
-
-    let slotsLeft = collectOnly ? 0 : Math.max(0, postsThisRun - publishedCount);
-    const sources = getEnabledSources(settings);
-
-    await updateProgress("rss", { current: 0, total: sources.length, detail: "Загрузка…" });
-    const allNews = await fetchAllNews(sources, (current, total, sourceName) =>
-      void updateProgress("rss", { current, total, detail: sourceName })
-    );
-    logger.info(`Total fetched: ${allNews.length} items`);
-
-    await updateProgress("filter", { detail: `${allNews.length} из RSS` });
-
-    const freshNews = allNews.filter((item) => isWithinLast24Hours(item.publishedAt));
-    logger.info(`Fresh (last 24h): ${freshNews.length} items`);
-
-    const deduped = dedupeNews(freshNews);
-    logger.info(`After deduplication: ${deduped.length} items`);
-
-    const unknown = [];
+    const deduped = dedupeNews(allProducts);
+    const unseen: typeof deduped = [];
     for (const item of deduped) {
       if (!(await isSeenUrl(item.url))) {
-        unknown.push(item);
+        unseen.push(item);
       }
     }
-    logger.info(`New (unseen): ${unknown.length} items`);
+    stats.rssNew = unseen.length;
 
-    if (unknown.length === 0) {
-      const queueAfter = await countPublishQueue();
-      const message =
-        publishedCount > 0
-          ? `Published ${publishedCount} from queue, ${queueAfter} still queued`
-          : queueAfter > 0
-            ? `No new RSS items, ${queueAfter} in publish queue`
-            : "No new candidates to analyze";
-      logger.info(message);
-      await progress.done({ published: publishedCount, detail: message });
-      await recordLastRun({
-        trigger: options.trigger,
-        success: true,
-        publishedCount,
-        message,
-      });
-      return { success: true, publishedCount, observationsSaved: 0, message };
-    }
-
-    const sorted = [...unknown].sort((a, b) => {
-      const tierA = a.sourceTier ?? 2;
-      const tierB = b.sourceTier ?? 2;
-      if (tierA !== tierB) return tierA - tierB;
-      const trustDiff = (b.trustScore ?? 0.75) - (a.trustScore ?? 0.75);
-      if (trustDiff !== 0) return trustDiff;
-      return b.publishedAt.getTime() - a.publishedAt.getTime();
+    await updateProgress("products", {
+      current: ALIEXPRESS_KEYWORD_COUNT,
+      total: ALIEXPRESS_KEYWORD_COUNT,
+      detail: `${allProducts.length} товаров, ${unseen.length} новых`,
     });
-
-    const { passed: afterPolicy, rejected: policyRejected } = filterByContentPolicy(sorted);
-    if (policyRejected.length > 0) {
-      logger.info(
-        `Content policy: ${afterPolicy.length} allowed, ${policyRejected.length} excluded (no AI)`
-      );
-      if (!dryRun) {
-        for (const entry of policyRejected) {
-          await markContentPolicyExcluded(entry.item, entry.result.reason);
-        }
-      }
-    }
-
-    const { passed: toAnalyze, rejected: prefiltered } = prefilterNews(afterPolicy);
-    if (prefiltered.length > 0) {
-      logger.info(
-        `Pre-filter: ${toAnalyze.length} passed, ${prefiltered.length} rejected (no AI)`
-      );
-      if (!dryRun) {
-        for (const entry of prefiltered) {
-          await markPrefilterRejected(entry.item, entry.reason);
-        }
-      }
-    }
 
     await updateProgress("filter", {
-      current: toAnalyze.length,
-      total: unknown.length,
-      detail: `${toAnalyze.length} на AI`,
+      current: 0,
+      total: unseen.length,
+      detail: `${unseen.length} новых URL`,
     });
 
-    if (toAnalyze.length === 0) {
-      const queueAfter = await countPublishQueue();
-      const message =
-        prefiltered.length > 0
-          ? `Pre-filter rejected ${prefiltered.length} item(s), nothing left for AI`
-          : "No suitable news found for publication";
-      logger.info(message);
-      await progress.done({ published: publishedCount, detail: message });
-      await recordLastRun({
-        trigger: options.trigger,
-        success: true,
-        publishedCount,
-        message,
-      });
-      return { success: true, publishedCount, observationsSaved, message };
-    }
-
-    const analyzeTotal = Math.ceil(Math.min(toAnalyze.length, 60) / 20);
-    await updateProgress("analyze", { current: 0, total: analyzeTotal, detail: "OpenAI…" });
-    const { publishable, observations } = await analyzeForPipeline(toAnalyze, (current, total) =>
-      void updateProgress("analyze", { current, total, detail: `пакет ${current}/${total}` })
-    );
-
-    for (const obs of observations) {
-      if (!dryRun) {
-        await saveObservation(analyzedToObservation(obs));
-      }
-      observationsSaved++;
-      logger.info(
-        `Observation saved: "${obs.news.title}" (level 1, score ${obs.analysis.score})`
-      );
-    }
-
-    const queueEligible: typeof publishable = [];
-    const belowThreshold: typeof publishable = [];
-    const hookDeferred: typeof publishable = [];
-
-    for (const item of publishable) {
-      if (isResearchFeedSource(item.news.source)) {
+    const policyPassed: typeof unseen = [];
+    for (const item of unseen) {
+      const policy = checkContentPolicy(item);
+      if (!policy.allowedForRadar) {
+        stats.policyRejected = (stats.policyRejected ?? 0) + 1;
         if (!dryRun) {
-          await saveObservation(analyzedToObservation(item));
+          await markContentPolicyExcluded(item, policy.reason);
         }
-        observationsSaved++;
-        logger.info(`Research track (arXiv → observation): "${item.news.title}"`);
         continue;
       }
-
-      if (!meetsQueueMinScore(item.analysis.level, item.analysis.score, item.news.source)) {
-        belowThreshold.push(item);
-        continue;
-      }
-
-      if (!passesReaderHookGate(item)) {
-        hookDeferred.push(item);
-        continue;
-      }
-
-      queueEligible.push(item);
+      policyPassed.push(item);
     }
 
-    for (const item of hookDeferred) {
-      if (!dryRun) {
-        await saveObservation(analyzedToObservation(item));
-      }
-      observationsSaved++;
-      logger.info(`Hook gate (→ observation): "${item.news.title}"`);
-    }
-
-    for (const item of belowThreshold) {
-      if (!dryRun) {
-        await saveObservation(analyzedToObservation(item));
-      }
-      observationsSaved++;
-      logger.info(
-        `Below queue threshold: "${item.news.title}" (${item.analysis.level}, score ${item.analysis.score})`
-      );
-    }
-
-    for (const item of queueEligible) {
-      if (!dryRun) {
-        await saveNewsRecord(analyzedToQueuedRecord(item));
+    const { passed: prefiltered, rejected: preRejected } = prefilterNews(policyPassed);
+    stats.prefilterRejected = preRejected.length;
+    if (!dryRun) {
+      for (const { item, reason } of preRejected) {
+        await markPrefilterRejected(item, reason);
       }
     }
 
-    if (!dryRun && queueEligible.length > 0) {
-      await maintainPublicationQueue();
-    }
-
-    const updatedHorizon = await getHorizonCountsToday();
-    const newPick = selectForPublication(
-      queueEligible,
-      slotsLeft,
-      quotaMax,
-      categoryCounts,
-      updatedHorizon,
-      horizonMix
-    );
-    if (newPick.skippedByQuota > 0) {
-      logger.info(
-        `Category quota: ${newPick.skippedByQuota} new item(s) deferred (category limit reached)`
-      );
-    }
-    if (newPick.pickedFuture > 0 || newPick.pickedNow > 0) {
-      logger.info(
-        `Horizon mix: ${newPick.pickedNow} now + ${newPick.pickedFuture} long-term from new items`
-      );
-    }
-    const minAiNew = applyMinAiReserve(
-      queueEligible,
-      newPick.selected,
-      slotsLeft,
-      {
-        minAiPostsPerDay: minAi,
-        maxPerCategory: quotaMax,
-        remainingToday: Math.max(0, remainingToday - publishedCount),
-        maxPostsPerRun: settings.maxPostsPerRun,
-        categoryCounts,
-      }
-    );
-    if (minAiNew.injected) {
-      logger.info(`AI minimum: reserved slot for "${minAiNew.title}"`);
-    }
-
-    const clustered = selectWithClusterLimits(minAiNew.selected, slotsLeft, {
-      maxPerSource: 1,
-      maxPerCategory: 1,
-      maxPerTechnology: 1,
+    stats.sentToAi = prefiltered.length;
+    await updateProgress("filter", {
+      current: prefiltered.length,
+      total: unseen.length,
+      detail: `На AI: ${prefiltered.length}`,
     });
 
-    const arxivCap = applyArxivDailyCap(clustered, arxivPostsToday);
-    if (arxivCap.deferred > 0) {
+    const analyzeTotal = Math.min(prefiltered.length, 45);
+    const analyzeBatches = Math.ceil(analyzeTotal / 15) || 1;
+    await updateProgress("analyze", {
+      current: 0,
+      total: analyzeBatches,
+      detail: "OpenAI curiosity/wow/share/buy…",
+    });
+
+    const aiResult = await analyzeFinds(prefiltered, (current, total) => {
+      void updateProgress("analyze", {
+        current,
+        total,
+        detail: `пакет ${current}/${total}`,
+      });
+    });
+    stats.aiFailedBatches = aiResult.failedBatches;
+    stats.aiFailedItems = aiResult.failedItems;
+
+    const lowScore = aiResult.evaluated.filter(
+      (e) => !e.accepted && e.analysis.isPhysicalProduct
+    ).length;
+    const notPhysical = aiResult.evaluated.filter((e) => !e.analysis.isPhysicalProduct).length;
+    stats.aiLowScoreSkipped = lowScore + notPhysical;
+    stats.aiPublishable = aiResult.accepted.length;
+
+    let queuedNew = 0;
+    let visionRejected = 0;
+    const visionTotal = aiResult.accepted.length;
+
+    await updateProgress("vision", {
+      current: 0,
+      total: visionTotal,
+      detail: visionTotal > 0 ? "Чистое фото товара…" : "Нет кандидатов",
+    });
+
+    for (let i = 0; i < aiResult.accepted.length; i++) {
+      const item = aiResult.accepted[i];
+      await updateProgress("vision", {
+        current: i + 1,
+        total: visionTotal,
+        detail: item.news.title.slice(0, 80),
+      });
+
+      let resolvedImageUrl: string | null = null;
+
+      if (item.news.sourceKind === "aliexpress") {
+        const picked = await selectCleanProductImage({
+          title: item.news.title,
+          imageUrl: item.news.imageUrl,
+          imageCandidates: item.news.imageCandidates,
+        });
+        resolvedImageUrl = picked.imageUrl;
+        if (!resolvedImageUrl) {
+          visionRejected++;
+          logger.info(`No usable photo for "${item.news.title}"`);
+          continue;
+        }
+      } else {
+        const imageUrl = item.news.imageUrl;
+        if (!imageUrl) {
+          visionRejected++;
+          logger.info(`No image for "${item.news.title}"`);
+          continue;
+        }
+        const accessible = await verifyImageUrlAccessible(imageUrl);
+        if (!accessible) {
+          visionRejected++;
+          logger.info(`Image not accessible for "${item.news.title}"`);
+          continue;
+        }
+        resolvedImageUrl = imageUrl;
+      }
+
+      const find: AnalyzedFind = {
+        news: { ...item.news, imageUrl: resolvedImageUrl },
+        analysis: { ...item.analysis, hasDeviceImage: true },
+      };
+
+      if (!dryRun) {
+        await queueFind(find, resolvedImageUrl);
+      }
+      queuedNew++;
       logger.info(
-        `arXiv cap: ${arxivCap.deferred} deferred (max ${MAX_ARXIV_POSTS_PER_DAY}/day)`
+        `Queued "${item.news.title}" C${item.analysis.rating.curiosity} W${item.analysis.rating.wow} S${item.analysis.rating.share} B${item.analysis.rating.buy} = ${item.analysis.finalScore}`
       );
+
+      await updateProgress("select", {
+        current: queuedNew,
+        total: visionTotal,
+        detail: find.analysis.productName ?? find.news.title.slice(0, 60),
+      });
     }
 
-    const ieCap = applyInterestingEngineeringCap(arxivCap.items, iePostsToday);
-    if (ieCap.deferred > 0) {
-      logger.info(`Interesting Engineering cap: ${ieCap.deferred} deferred`);
-    }
-
-    const newCap = applyRuDailyCap(ieCap.items, ruPostsToday);
-    if (newCap.deferred > 0) {
-      logger.info(
-        `RU cap: ${newCap.deferred} new item(s) deferred (max ${MAX_RU_POSTS_PER_DAY}/day)`
-      );
-    }
-
-    const threeDCap = apply3DNewsDailyCap(newCap.items, threeDNewsPostsToday);
-    if (threeDCap.deferred > 0) {
-      logger.info(
-        `3DNews cap: ${threeDCap.deferred} deferred (max ${MAX_3DNEWS_POSTS_PER_DAY}/day)`
-      );
-    }
-    const toPublish = threeDCap.items;
-    queuedNew = Math.max(0, queueEligible.length - toPublish.length);
+    stats.visionRejected = visionRejected;
+    stats.queueEligible = queuedNew;
+    stats.queuedNew = queuedNew;
+    stats.queueAfter = dryRun ? stats.queueBefore ?? 0 : await countPublishQueue();
 
     await updateProgress("select", {
-      current: toPublish.length,
-      total: queueEligible.length,
-      detail: `${toPublish.length} к публикации`,
+      current: queuedNew,
+      total: Math.max(queuedNew, 1),
+      detail: `+${queuedNew} в очередь`,
     });
 
-    if (!collectOnly && toPublish.length > 0) {
-      logger.info(`Selected ${toPublish.length} new item(s) for publication`);
-      await updateProgress("publish", { current: 0, total: toPublish.length, detail: "Генерация постов…" });
-      publishedCount += await publishPosts(toPublish, {
-        dryRun,
-        postType: "article",
-        onProgress: (current, total, title) =>
-          void updateProgress("publish", { current, total, detail: title.slice(0, 80) }),
-      });
-      slotsLeft = Math.max(0, slotsLeft - toPublish.length);
-    } else if (queueEligible.length > 0) {
-      logger.info(`Queued ${queueEligible.length} eligible item(s) for later`);
-    }
+    const message = formatPipelineRunMessage(stats);
+    logger.info(`Pipeline (${options.trigger}): ${message.replace(/\n/g, " | ")}`);
 
-    const queueAfter = await countPublishQueue();
-    const message = dryRun
-      ? `Dry-run: ${publishedCount} post(s), ${observationsSaved} observation(s), queue ${queueAfter}`
-      : publishedCount > 0
-        ? `Published ${publishedCount}, saved ${observationsSaved} observation(s), ${queuedNew} queued (${queueAfter} total in queue)`
-        : observationsSaved > 0 || queueAfter > 0
-          ? `Saved ${observationsSaved} observation(s), ${queueAfter} in publish queue`
-          : "No suitable news found for publication";
-
-    logger.info(`Pipeline completed: ${message}`);
-    await progress.done({ published: publishedCount, detail: message });
     await recordLastRun({
       trigger: options.trigger,
       success: true,
-      publishedCount,
+      publishedCount: 0,
       message,
     });
 
-    return { success: true, publishedCount, observationsSaved, message };
+    return { success: true, publishedCount: 0, message, stats };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     logger.error("Pipeline failed", error);
-    await progress.error(errMsg);
     await recordLastRun({
       trigger: options.trigger,
       success: false,
-      publishedCount,
+      publishedCount: 0,
       message: errMsg,
     });
-    return {
-      success: false,
-      publishedCount,
-      observationsSaved,
-      message: errMsg,
-    };
+    return { success: false, publishedCount: 0, message: errMsg, stats };
   } finally {
     endTask("pipeline");
-    await setPipelineRunning(false);
   }
 }
+
+export async function getPipelineQueuePreview(): Promise<number> {
+  return countPublishQueue();
+}
+
+export { getPublishQueue };

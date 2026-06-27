@@ -1,13 +1,11 @@
 import "dotenv/config";
 import { z } from "zod";
 import {
+  DEFAULT_BATCH_CRON_DAY,
+  DEFAULT_BATCH_CRON_EVENING,
+  DEFAULT_BATCH_CRON_MORNING,
+  DEFAULT_BATCH_CRON_NIGHT,
   DEFAULT_POST_INTERVAL_CRON,
-  DEFAULT_PUBLISH_INTERVAL_CRON,
-  DEFAULT_WEEKLY_GITTREND_CRON,
-  DEFAULT_WEEKLY_GITTREND_INGEST_CRON,
-  DEFAULT_WEEKLY_IN_THE_BOX_CRON,
-  DEFAULT_WEEKLY_TRENDS_CRON,
-  DEFAULT_WEEKLY_WEIRD_GITHUB_CRON,
 } from "./utils/cronSchedule.js";
 
 const envSchema = z.object({
@@ -17,24 +15,18 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHANNEL_ID: z.string().optional(),
   TELEGRAM_ADMIN_USER_ID: z.coerce.number().int().positive().optional(),
-  MAX_POSTS_PER_DAY: z.coerce.number().int().positive().default(10),
-  MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(2),
+  MAX_POSTS_PER_DAY: z.coerce.number().int().positive().default(16),
+  MAX_POSTS_PER_RUN: z.coerce.number().int().positive().default(4),
   POST_INTERVAL_CRON: z.string().default(DEFAULT_POST_INTERVAL_CRON),
-  PUBLISH_INTERVAL_CRON: z.string().default(DEFAULT_PUBLISH_INTERVAL_CRON),
-  WEEKLY_TRENDS_CRON: z.string().default(DEFAULT_WEEKLY_TRENDS_CRON),
-  WEEKLY_GITTREND_CRON: z.string().default(DEFAULT_WEEKLY_GITTREND_CRON),
-  WEEKLY_GITTREND_INGEST_CRON: z.string().default(DEFAULT_WEEKLY_GITTREND_INGEST_CRON),
-  WEEKLY_WEIRD_GITHUB_CRON: z.string().default(DEFAULT_WEEKLY_WEIRD_GITHUB_CRON),
-  WEEKLY_IN_THE_BOX_CRON: z.string().default(DEFAULT_WEEKLY_IN_THE_BOX_CRON),
-  GITTREND_RADAR_URL: z
-    .string()
-    .url()
-    .default(
-      "https://raw.githubusercontent.com/zobnin8-ux/gitrend/main/reports/weekly-radar.json"
-    ),
-  GITTREND_MAX_POSTS: z.coerce.number().int().positive().max(3).default(3),
-  GITTREND_MIN_SIGNAL_STRENGTH: z.enum(["high", "medium", "low"]).default("medium"),
-  GITTREND_CATEGORY_COOLDOWN_DAYS: z.coerce.number().int().nonnegative().default(14),
+  BATCH_SIZE: z.coerce.number().int().positive().default(4),
+  BATCH_CRON_MORNING: z.string().default(DEFAULT_BATCH_CRON_MORNING),
+  BATCH_CRON_DAY: z.string().default(DEFAULT_BATCH_CRON_DAY),
+  BATCH_CRON_EVENING: z.string().default(DEFAULT_BATCH_CRON_EVENING),
+  BATCH_CRON_NIGHT: z.string().default(DEFAULT_BATCH_CRON_NIGHT),
+  FIND_MIN_SCORE: z.coerce.number().int().min(0).max(40).default(24),
+  FIND_MAX_PRICE_USD: z.coerce.number().positive().default(400),
+  FIND_TTL_DAYS: z.coerce.number().int().positive().default(10),
+  FIND_LOOKBACK_DAYS: z.coerce.number().int().positive().default(5),
   DRY_RUN: z
     .string()
     .optional()
@@ -43,19 +35,17 @@ const envSchema = z.object({
   DASHBOARD_HOST: z.string().default("0.0.0.0"),
   DASHBOARD_PASSWORD: z.string().min(1).default("radar"),
   MAX_PUBLICATION_QUEUE_SIZE: z.coerce.number().int().positive().default(50),
-  SIGNAL_TTL_DAYS: z.coerce.number().int().positive().default(7),
-  IMPACT_TTL_DAYS: z.coerce.number().int().positive().default(10),
-  BREAKTHROUGH_TTL_DAYS: z.coerce.number().int().positive().default(30),
-  FAILURE_TTL_DAYS: z.coerce.number().int().positive().default(7),
-  MIN_SCORE_SIGNAL: z.coerce.number().int().min(1).max(10).default(7),
-  MIN_SCORE_IMPACT: z.coerce.number().int().min(1).max(10).default(7),
-  MIN_SCORE_BREAKTHROUGH: z.coerce.number().int().min(1).max(10).default(7),
-  MIN_SCORE_FAILURE: z.coerce.number().int().min(1).max(10).default(8),
-  /** Ранний гейт: что попадает в observations и очередь после AI-анализа */
-  MIN_TRACK_SCORE: z.coerce.number().int().min(1).max(10).default(6),
-  /** Вероятность блока «Наблюдение» для постов уровня signal (0–1) */
-  OBSERVER_SIGNAL_RATE: z.coerce.number().min(0).max(1).default(0.1),
-  OPENAI_POST_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.55),
+  OPENAI_POST_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.6),
+  ALIEXPRESS_APP_KEY: z.string().optional(),
+  ALIEXPRESS_APP_SECRET: z.string().optional(),
+  ALIEXPRESS_TRACKING_ID: z.string().default("default"),
+  ALIEXPRESS_TARGET_CURRENCY: z.string().default("USD"),
+  ALIEXPRESS_TARGET_LANGUAGE: z.string().default("RU"),
+  ALIEXPRESS_SHIP_TO_COUNTRY: z.string().default("RU"),
+  ALIEXPRESS_USE_HOTPRODUCT: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 });
 
 const parsed = envSchema.safeParse(process.env);

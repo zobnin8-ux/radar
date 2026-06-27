@@ -1,6 +1,14 @@
 import type { NewsItem } from "../types.js";
+import { formatPrice, parseAmount } from "./formatPrice.js";
 import { isLikelyNonDeviceImageUrl } from "./deviceImage.js";
 import { logger } from "./logger.js";
+
+export { formatPrice } from "./formatPrice.js";
+
+export interface ArticleMeta {
+  imageUrl?: string;
+  price?: string;
+}
 
 const FETCH_HEADERS = {
   "User-Agent":
@@ -28,6 +36,77 @@ function extractMetaTag(html: string, attr: "property" | "name", key: string): s
   return raw ? decodeHtmlEntities(raw) : undefined;
 }
 
+function priceFromMetaTags(html: string): string | undefined {
+  const amount =
+    extractMetaTag(html, "property", "product:price:amount") ??
+    extractMetaTag(html, "property", "og:price:amount");
+  const currency =
+    extractMetaTag(html, "property", "product:price:currency") ??
+    extractMetaTag(html, "property", "og:price:currency");
+
+  return formatPrice(parseAmount(amount), currency);
+}
+
+function priceFromOffers(offers: unknown): string | undefined {
+  if (!offers) return undefined;
+
+  const list = Array.isArray(offers) ? offers : [offers];
+  for (const offer of list) {
+    if (!offer || typeof offer !== "object") continue;
+    const o = offer as Record<string, unknown>;
+    const type = String(o["@type"] ?? "").toLowerCase();
+
+    if (type.includes("aggregateoffer")) {
+      const low = parseAmount(o.lowPrice as string | number | undefined);
+      const high = parseAmount(o.highPrice as string | number | undefined);
+      const currency = (o.priceCurrency as string | undefined) ?? (o.lowPriceCurrency as string | undefined);
+      const formatted = formatPrice(low, currency, high);
+      if (formatted) return formatted;
+    }
+
+    const price = parseAmount(o.price as string | number | undefined);
+    const currency = o.priceCurrency as string | undefined;
+    const formatted = formatPrice(price, currency);
+    if (formatted) return formatted;
+  }
+
+  return undefined;
+}
+
+function collectJsonLdPrice(node: unknown): string | undefined {
+  if (!node) return undefined;
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = collectJsonLdPrice(item);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  if (typeof node !== "object") return undefined;
+
+  const obj = node as Record<string, unknown>;
+  const type = String(obj["@type"] ?? "").toLowerCase();
+
+  if (type.includes("product")) {
+    const fromOffers = priceFromOffers(obj.offers);
+    if (fromOffers) return fromOffers;
+  }
+
+  if (obj.offers) {
+    const fromOffers = priceFromOffers(obj.offers);
+    if (fromOffers) return fromOffers;
+  }
+
+  if (obj["@graph"]) {
+    const fromGraph = collectJsonLdPrice(obj["@graph"]);
+    if (fromGraph) return fromGraph;
+  }
+
+  return undefined;
+}
+
 function extractJsonLdImages(html: string): string[] {
   const images: string[] = [];
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -43,6 +122,23 @@ function extractJsonLdImages(html: string): string[] {
   }
 
   return images;
+}
+
+function extractJsonLdPriceFromHtml(html: string): string | undefined {
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(html)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]) as unknown;
+      const price = collectJsonLdPrice(parsed);
+      if (price) return price;
+    } catch {
+      /* skip */
+    }
+  }
+
+  return undefined;
 }
 
 function collectJsonLdImages(node: unknown, out: string[]): void {
@@ -83,7 +179,25 @@ function pickBestImage(candidates: string[]): string | undefined {
   return undefined;
 }
 
-export async function fetchArticleImageUrl(articleUrl: string): Promise<string | undefined> {
+function parseArticleHtml(html: string): ArticleMeta {
+  const imageCandidates = [
+    extractMetaTag(html, "property", "og:image"),
+    extractMetaTag(html, "property", "og:image:url"),
+    extractMetaTag(html, "name", "twitter:image"),
+    extractMetaTag(html, "name", "twitter:image:src"),
+    ...extractJsonLdImages(html),
+  ].filter((u): u is string => !!u);
+
+  const price =
+    priceFromMetaTags(html) ?? extractJsonLdPriceFromHtml(html);
+
+  return {
+    imageUrl: pickBestImage(imageCandidates),
+    price,
+  };
+}
+
+export async function fetchArticleMeta(articleUrl: string): Promise<ArticleMeta> {
   try {
     const response = await fetch(articleUrl, {
       signal: AbortSignal.timeout(20_000),
@@ -91,34 +205,41 @@ export async function fetchArticleImageUrl(articleUrl: string): Promise<string |
       headers: FETCH_HEADERS,
     });
 
-    if (!response.ok) return undefined;
+    if (!response.ok) return {};
 
     const html = await response.text();
-    const candidates = [
-      extractMetaTag(html, "property", "og:image"),
-      extractMetaTag(html, "property", "og:image:url"),
-      extractMetaTag(html, "name", "twitter:image"),
-      extractMetaTag(html, "name", "twitter:image:src"),
-      ...extractJsonLdImages(html),
-    ].filter((u): u is string => !!u);
-
-    return pickBestImage(candidates);
+    return parseArticleHtml(html);
   } catch (error) {
-    logger.debug(`Article image fetch failed: ${articleUrl}`, error);
-    return undefined;
+    logger.debug(`Article meta fetch failed: ${articleUrl}`, error);
+    return {};
   }
 }
 
+export async function fetchArticleImageUrl(articleUrl: string): Promise<string | undefined> {
+  const meta = await fetchArticleMeta(articleUrl);
+  return meta.imageUrl;
+}
+
 export async function enrichNewsWithArticleImage(news: NewsItem): Promise<NewsItem> {
-  if (news.imageUrl && !isLikelyNonDeviceImageUrl(news.imageUrl)) {
-    return news;
+  const hasGoodImage = !!(news.imageUrl && !isLikelyNonDeviceImageUrl(news.imageUrl));
+  if (hasGoodImage && news.price) return news;
+
+  const meta = await fetchArticleMeta(news.url);
+  if (!meta.imageUrl && !meta.price) return news;
+
+  const next: NewsItem = { ...news };
+  if (!hasGoodImage && meta.imageUrl) {
+    next.imageUrl = meta.imageUrl;
+    logger.debug(
+      `Article og:image for "${news.title.slice(0, 50)}…": ${meta.imageUrl.slice(0, 80)}`
+    );
+  }
+  if (!next.price && meta.price) {
+    next.price = meta.price;
+    logger.debug(`Article price for "${news.title.slice(0, 50)}…": ${meta.price}`);
   }
 
-  const imageUrl = await fetchArticleImageUrl(news.url);
-  if (!imageUrl) return news;
-
-  logger.debug(`Article og:image for "${news.title.slice(0, 50)}…": ${imageUrl.slice(0, 80)}`);
-  return { ...news, imageUrl };
+  return next;
 }
 
 export async function enrichNewsBatch(items: NewsItem[], concurrency = 5): Promise<NewsItem[]> {

@@ -1,83 +1,94 @@
 export type PublicationLanguage = "en" | "ru";
 
+export type SourceKind = "aliexpress";
+
+export interface ProductCandidate {
+  sourceKind: SourceKind;
+  externalId: string;
+  title: string;
+  url: string;
+  buyUrl: string;
+  imageUrl: string;
+  price?: string;
+  currency?: string;
+  rating?: number;
+  orders?: number;
+  description?: string;
+  publishedAt: Date;
+  /** Кандидаты на фото (галерея AE); vision выбирает чистое при постановке в очередь */
+  imageCandidates?: string[];
+}
+
 export interface NewsItem {
   title: string;
   url: string;
   source: string;
   publishedAt: Date;
   description?: string;
-  sourceTier?: 1 | 2;
-  trustScore?: number;
-  /** Язык источника; для ru — без перевода на всех этапах */
   language?: PublicationLanguage;
   /** URL обложки/фото из RSS (enclosure или media) */
   imageUrl?: string;
-  /** Приоритет источника для рубрики «Будущее в коробке» (меньше = выше). */
-  boxPriority?: number;
+  /** Приоритет источника (1 = выше) */
+  priority?: number;
+  /** Цена, извлечённая из RSS или страницы товара */
+  price?: string;
+  /** Товарный источник */
+  sourceKind?: SourceKind;
+  currency?: string;
+  /** Партнёрская/проектная ссылка «купить/поддержать» */
+  buyUrl?: string;
+  /** 0–5 (AliExpress evaluate_rate) */
+  rating?: number;
+  /** Продажи (AliExpress) */
+  orders?: number;
+  /** Галерея фото (AliExpress); для vision-выбора чистого кадра */
+  imageCandidates?: string[];
 }
 
-export const MATURITY_LEVELS = [
-  "observation",
-  "signal",
-  "impact",
-  "breakthrough",
-  "failure",
-] as const;
-
-export type MaturityLevel = (typeof MATURITY_LEVELS)[number];
-
-export const PUBLISHABLE_LEVELS: MaturityLevel[] = [
-  "signal",
-  "impact",
-  "breakthrough",
-  "failure",
-];
-
-export const LEVEL_NUMBERS: Record<MaturityLevel, number | null> = {
-  observation: 1,
-  signal: 2,
-  impact: 3,
-  breakthrough: 4,
-  failure: null,
-};
-
 export const CATEGORIES = [
-  "ai",
-  "robotics",
-  "space",
-  "aviation",
-  "energy",
-  "transport",
-  "biotech",
-  "engineering",
-  "science",
-  "materials",
-  "climate",
-  "defense-tech",
-  "semiconductors",
-  "startups",
-  "other",
+  "smart-home",
+  "gadgets",
+  "edc",
+  "workshop",
+  "auto",
+  "travel",
+  "desk-setup",
+  "future-stuff",
+  "weird",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
 
-export const IMPACT_HORIZONS = ["now", "1-3 years", "3-7 years", "10+ years"] as const;
-
-export type ImpactHorizon = (typeof IMPACT_HORIZONS)[number];
-
-export interface NewsAnalysis {
-  level: MaturityLevel;
-  score: number;
-  category: Category;
-  impactHorizon: ImpactHorizon;
-  reason: string;
-  observerComment: string | null;
-  technology: string | null;
+export interface FindRating {
+  curiosity: number;
+  wow: number;
+  share: number;
+  buy: number;
 }
 
-export interface AnalyzedNews {
+export const FINAL_SCORE_MAX = 40;
+
+export function finalScore(r: FindRating): number {
+  return r.curiosity + r.wow + r.share + r.buy;
+}
+
+export interface FindAnalysis {
+  isPhysicalProduct: boolean;
+  productName: string | null;
+  category: Category;
+  rating: FindRating;
+  finalScore: number;
+  whatItIs: string;
+  whyInteresting: string;
+  price: string | null;
+  hasDeviceImage: boolean;
+  rejectReason: string | null;
+  reason: string;
+}
+
+export interface AnalyzedFind {
   news: NewsItem;
-  analysis: NewsAnalysis;
+  analysis: FindAnalysis;
 }
 
 export const QUEUE_ITEM_STATUSES = [
@@ -96,22 +107,30 @@ export interface NewsRecord {
   source: string;
   newsPublishedAt: string;
   discoveredAt: string;
-  level: MaturityLevel;
   category: Category;
-  score: number;
-  impactHorizon: ImpactHorizon;
+  curiosity: number;
+  wow: number;
+  share: number;
+  buy: number;
+  finalScore: number;
+  productName: string | null;
+  price: string | null;
+  buyUrl?: string | null;
+  sourceKind?: SourceKind;
+  rating?: number;
+  orders?: number;
+  whatItIs: string;
+  whyInteresting: string;
   reason: string;
-  observerComment?: string | null;
-  technology?: string | null;
-  trustScore?: number;
-  sourceTier?: 1 | 2;
+  imageUrl?: string;
   postedAt?: string;
   queuedAt?: string;
   expiresAt?: string;
-  finalScore?: number;
   status?: QueueItemStatus;
   archiveReason?: string | null;
 }
+
+export type PublishedPostType = "article" | "injection";
 
 export interface PublishedRecord {
   url: string;
@@ -119,9 +138,7 @@ export interface PublishedRecord {
   publishedAt: string;
   postedAt: string;
   source: string;
-  score: number;
-  level: MaturityLevel;
   category: Category;
-  impactHorizon?: ImpactHorizon;
-  postType?: "article" | "digest" | "trends" | "injection" | "in-the-box" | "github-trends" | "github-weird";
+  finalScore: number;
+  postType?: PublishedPostType;
 }

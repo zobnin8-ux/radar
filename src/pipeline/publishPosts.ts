@@ -1,25 +1,19 @@
+import { generateFindPost } from "../ai/generateFindPost.js";
 import { checkContentPolicy } from "../filters/contentPolicy.js";
-import { generateTelegramPost } from "../ai/generateTelegramPost.js";
-import {
-  analyzedToRecord,
-  markPosted,
-  saveNewsRecord,
-} from "../storage/newsStore.js";
-import { addPublished } from "../storage/publishedStore.js";
-import type { AnalyzedNews } from "../types.js";
+import { markPosted, saveNewsRecord } from "../storage/newsStore.js";
+import { addPublished, isAlreadyPublished } from "../storage/publishedStore.js";
+import type { AnalyzedFind, PublishedPostType } from "../types.js";
 import { logger } from "../utils/logger.js";
 import { sleep } from "../utils/sleep.js";
 import { sendPost } from "../telegram/sendPost.js";
 
-const DELAY_BETWEEN_POSTS_MS = 5000;
+export const DELAY_BETWEEN_POSTS_MS = 5000;
 
-export type PublishPostType = "article" | "injection";
-
-export async function publishPosts(
-  candidates: AnalyzedNews[],
+export async function publishFindPosts(
+  candidates: AnalyzedFind[],
   options: {
     dryRun?: boolean;
-    postType: PublishPostType;
+    postType: PublishedPostType;
     onProgress?: (current: number, total: number, title: string) => void;
   }
 ): Promise<number> {
@@ -37,21 +31,37 @@ export async function publishPosts(
       continue;
     }
 
+    if (!options.dryRun && (await isAlreadyPublished(candidate.news.url))) {
+      logger.info(`Already published, skipping: "${candidate.news.title.slice(0, 60)}"`);
+      continue;
+    }
+
+    const photoUrl = candidate.news.imageUrl;
+    if (!photoUrl) {
+      logger.warn(`No photo for "${candidate.news.title}", skipping`);
+      continue;
+    }
+
     const tag = options.postType === "injection" ? "inject" : "post";
+    const { rating, finalScore, category } = candidate.analysis;
     logger.info(
-      `[${tag}] ${i + 1}/${candidates.length}: "${candidate.news.title}" (level ${candidate.analysis.level}, score ${candidate.analysis.score})`
+      `[${tag}] ${i + 1}/${candidates.length}: "${candidate.news.title}" (C${rating.curiosity} W${rating.wow} S${rating.share} B${rating.buy} = ${finalScore}, ${category})`
     );
 
-    const post = await generateTelegramPost(candidate);
-    if (!post) {
-      logger.warn(`Post generation failed for "${candidate.news.title}", skipping`);
+    const postResult = await generateFindPost(candidate);
+    if (!postResult.ok) {
+      logger.warn(
+        `Post generation failed for "${candidate.news.title}": ${postResult.reason}`
+      );
       continue;
     }
 
     const sent = await sendPost({
-      text: post,
+      text: postResult.result.post,
+      photoUrl,
       dryRun: options.dryRun,
       parseMode: "HTML",
+      splitPhotoAndText: true,
     });
     if (!sent) {
       logger.error(`Publication failed for "${candidate.news.title}", skipping`);
@@ -60,9 +70,31 @@ export async function publishPosts(
 
     if (!options.dryRun) {
       const postedAt = new Date().toISOString();
-      const record = analyzedToRecord(candidate);
-      record.postedAt = postedAt;
-      await saveNewsRecord(record);
+      await saveNewsRecord({
+        url: candidate.news.url,
+        title: candidate.news.title,
+        source: candidate.news.source,
+        newsPublishedAt: candidate.news.publishedAt.toISOString(),
+        discoveredAt: postedAt,
+        category: candidate.analysis.category,
+        curiosity: candidate.analysis.rating.curiosity,
+        wow: candidate.analysis.rating.wow,
+        share: candidate.analysis.rating.share,
+        buy: candidate.analysis.rating.buy,
+        finalScore: candidate.analysis.finalScore,
+        productName: candidate.analysis.productName,
+        price: candidate.news.price ?? candidate.analysis.price,
+        buyUrl: candidate.news.buyUrl ?? candidate.news.url,
+        sourceKind: candidate.news.sourceKind,
+        rating: candidate.news.rating,
+        orders: candidate.news.orders,
+        whatItIs: candidate.analysis.whatItIs,
+        whyInteresting: candidate.analysis.whyInteresting,
+        reason: candidate.analysis.reason,
+        imageUrl: photoUrl,
+        postedAt,
+        status: "published",
+      });
       await markPosted(candidate.news.url, postedAt);
 
       await addPublished({
@@ -71,10 +103,8 @@ export async function publishPosts(
         publishedAt: candidate.news.publishedAt.toISOString(),
         postedAt,
         source: candidate.news.source,
-        score: candidate.analysis.score,
-        level: candidate.analysis.level,
         category: candidate.analysis.category,
-        impactHorizon: candidate.analysis.impactHorizon,
+        finalScore: candidate.analysis.finalScore,
         postType: options.postType,
       });
     }

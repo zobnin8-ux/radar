@@ -116,6 +116,35 @@ export interface TelegramUpdate {
   };
 }
 
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
+export async function setBotCommands(commands: BotCommand[]): Promise<boolean> {
+  const token = getToken();
+  if (!token) return false;
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({ commands }),
+    });
+
+    const data = (await response.json()) as TelegramResponse;
+    if (!response.ok || !data.ok) {
+      logger.warn("setMyCommands failed", data.description);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    logger.warn("setMyCommands error", error);
+    return false;
+  }
+}
+
 export async function getUpdates(
   offset: number,
   timeout = 30
